@@ -1,165 +1,63 @@
-<br /><br />
+# RealAdvisor RevOps Desk
 
-<p align="center">
-<a href="https://plane.so">
-  <img src="https://media.docs.plane.so/logo/plane_github_readme.png" alt="Plane Logo" width="400">
-</a>
-</p>
-<p align="center"><b>Modern project management for all teams</b></p>
+A lightweight, invitation-only request desk built on [Plane](https://github.com/makeplane/plane).
 
-<p align="center">
-    <a href="https://plane.so/"><b>Website</b></a> •
-    <a href="https://forum.plane.so"><b>Forum</b></a> •
-    <a href="https://x.com/planepowers"><b>X</b></a> •
-    <a href="https://docs.plane.so/"><b>Documentation</b></a>
-</p>
+**Live:** https://revops-desk.vercel.app · **Source:** https://github.com/realadvisor/revops-desk
 
-<p>
-    <a href="https://app.plane.so/#gh-light-mode-only" target="_blank">
-      <img
-        src="https://media.docs.plane.so/GitHub-readme/github-top.webp"
-        alt="Plane Screens"
-        width="100%"
-      />
-    </a>
-</p>
+Stakeholders submit a topic, country, urgency and optional requested deadline, then follow status and discussion. Managers triage one shared queue, assign an owner, set a delivery date and manage invitations. List and board views include search, filters and unread indicators. All invited members can read all requests; do not put restricted HR or personal records in the shared queue.
 
-Meet [Plane](https://plane.so/), an open-source project management tool to track issues, run ~sprints~ cycles, and manage product roadmaps without the chaos of managing the tool itself. 🧘‍♀️
+## Owner and team access
 
-> Plane is evolving every day. Your suggestions, ideas, and reported bugs help us immensely. Do not hesitate to join in the conversation on [Forum](https://forum.plane.so) or raise a GitHub issue. We read everything and respond to most.
+The owner starts with a private, one-use activation link and chooses their own password. In **Team**, create a requester or manager invitation and share the generated link directly. Links expire after seven days. A new invitation to the same email invalidates the previous link and can reset a forgotten password. Removing a member revokes access immediately. No invitation emails or Slack messages are sent automatically.
 
-## 🚀 Installation
+## Run locally
 
-Getting started with Plane is simple. Choose the setup that works best for you:
+Use Python 3.12 and an isolated PostgreSQL database. Never point development or tests at another application's database.
 
-- **Plane Cloud**
-  Sign up for a free account on [Plane Cloud](https://app.plane.so)—it's the fastest way to get up and running without worrying about infrastructure.
+```sh
+python3.12 -m venv .venv-desk
+source .venv-desk/bin/activate
+pip install -r requirements.txt
+```
 
-- **Self-host Plane**
-  Prefer full control over your data and infrastructure? Install and run Plane on your own servers. Follow our detailed [deployment guides](https://developers.plane.so/self-hosting/overview) to get started.
+Create an ignored `.env.local` containing `DATABASE_URL`, a randomly generated `SECRET_KEY`, and `DESK_DEBUG=1`. Then:
 
-| Installation methods | Docs link                                                                                                                                                                               |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Docker               | [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)](https://developers.plane.so/self-hosting/methods/docker-compose)         |
-| Kubernetes           | [![Kubernetes](https://img.shields.io/badge/kubernetes-%23326ce5.svg?style=for-the-badge&logo=kubernetes&logoColor=white)](https://developers.plane.so/self-hosting/methods/kubernetes) |
+```sh
+python manage.py migrate
+python manage.py bootstrap_desk --email owner@example.com --name Owner
+python manage.py runserver 127.0.0.1:4783
+```
 
-`Instance admins` can configure instance settings with [God mode](https://developers.plane.so/self-hosting/govern/instance-admin).
+Bootstrap is idempotent and does not set a password. For the initial activation, run `python manage.py shell` and create a private invitation:
 
-## 🌟 Features
+```python
+from plane.db.models import Project, User
+from desk.views import make_invitation
+project = Project.objects.get(identifier="REV", workspace__slug="realadvisor")
+owner = User.objects.get(email="owner@example.com")
+token = make_invitation(project, owner, email=owner.email, name=owner.first_name, role=20)
+print("http://127.0.0.1:4783/join/" + token + "/")
+```
 
-- **Work Items**
-  Efficiently create and manage tasks with a robust rich text editor that supports file uploads. Enhance organization and tracking by adding sub-properties and referencing related issues.
+Do not commit or publicly share activation links, credentials or database URLs.
 
-- **Cycles**
-  Maintain your team’s momentum with Cycles. Track progress effortlessly using burn-down charts and other insightful tools.
+## Checks
 
-- **Modules**
-  Simplify complex projects by dividing them into smaller, manageable modules.
+```sh
+python manage.py check
+python manage.py test desk --keepdb --noinput
+```
 
-- **Views**
-  Customize your workflow by creating filters to display only the most relevant issues. Save and share these views with ease.
+The test runner creates a separate `test_` database and needs permission to create it. Integration checks cover ticket creation, attachments, escaped discussion, manager-only updates, stale edits, validation and idempotency, session/CSRF boundaries, invitation replay/expiry, login throttling, read receipts and concurrent access changes.
 
-- **Pages**
-  Capture and organize ideas using Plane Pages, complete with AI capabilities and a rich text editor. Format text, insert images, add hyperlinks, or convert your notes into actionable items.
+## Deployment
 
-- **Analytics**
-  Access real-time insights across all your Plane data. Visualize trends, remove blockers, and keep your projects moving forward.
+Vercel project `realadvisor/revops-desk`, production branch `revops`, Frankfurt region. Root `vercel.json` and `pyproject.toml` configure Django. Neon supplies isolated production (`neondb`) and preview (`revops_preview`) databases; Django reads only `DATABASE_URL`. Production and preview must keep different database URLs. GitHub Actions inherited from Plane are disabled on this fork.
 
-## 🛠️ Local development
+Required environment variables: `DATABASE_URL`, `SECRET_KEY`, `ALLOWED_HOSTS`, `DJANGO_SETTINGS_MODULE=desk.settings`. Never enable `DESK_DEBUG` on Vercel. Run migrations against the correct environment before deploying schema changes; builds deliberately do not mutate databases. Deploy with `vercel --prod --scope realadvisor`. Back up the database before destructive migrations; a Vercel code rollback does not revert data.
 
-See [CONTRIBUTING](./CONTRIBUTING.md)
+## Maintenance and upstream
 
-## ⚙️ Built with
+Plane's Django users, memberships, projects, issues, states, labels, comments, activities and migrations remain the underlying model. `desk/` adds a small server-rendered interface and request metadata. No Redis, worker or separate frontend service is required. Private attachments are stored in PostgreSQL, limited to 3 MiB each and 20 per request; use object storage if volume grows. Topics and countries are editable through Settings.
 
-[![React Router](https://img.shields.io/badge/-React%20Router-CA4245?logo=react-router&style=for-the-badge&logoColor=white)](https://reactrouter.com/)
-[![Django](https://img.shields.io/badge/Django-092E20?style=for-the-badge&logo=django&logoColor=green)](https://www.djangoproject.com/)
-[![Node JS](https://img.shields.io/badge/node.js-339933?style=for-the-badge&logo=Node.js&logoColor=white)](https://nodejs.org/en)
-
-## 📸 Screenshots
-
-  <p>
-    <a href="https://plane.so" target="_blank">
-      <img
-        src="https://media.docs.plane.so/GitHub-readme/github-work-items.webp"
-        alt="Plane Views"
-        width="100%"
-      />
-    </a>
-  </p>
-  <p>
-    <a href="https://plane.so" target="_blank">
-      <img
-        src="https://media.docs.plane.so/GitHub-readme/github-cycles.webp"
-        width="100%"
-      />
-    </a>
-  </p>
-  <p>
-    <a href="https://plane.so" target="_blank">
-      <img
-        src="https://media.docs.plane.so/GitHub-readme/github-modules.webp"
-        alt="Plane Cycles and Modules"
-        width="100%"
-      />
-    </a>
-  </p>
-  <p>
-    <a href="https://plane.so" target="_blank">
-      <img
-        src="https://media.docs.plane.so/GitHub-readme/github-views.webp"
-        alt="Plane Analytics"
-        width="100%"
-      />
-    </a>
-  </p>
-   <p>
-    <a href="https://plane.so" target="_blank">
-      <img
-        src="https://media.docs.plane.so/GitHub-readme/github-analytics.webp"
-        alt="Plane Pages"
-        width="100%"
-      />
-    </a>
-  </p>
-</p>
-
-## 📝 Documentation
-
-Explore Plane's [product documentation](https://docs.plane.so/) and [developer documentation](https://developers.plane.so/) to learn about features, setup, and usage.
-
-## ❤️ Community
-
-Join the Plane community on [GitHub Discussions](https://github.com/orgs/makeplane/discussions) and our [Forum](https://forum.plane.so). We follow a [Code of conduct](https://github.com/makeplane/plane/blob/master/CODE_OF_CONDUCT.md) in all our community channels.
-
-Feel free to ask questions, report bugs, participate in discussions, share ideas, request features, or showcase your projects. We’d love to hear from you!
-
-## 🛡️ Security
-
-If you discover a security vulnerability in Plane, please report it responsibly instead of opening a public issue. We take all legitimate reports seriously and will investigate them promptly. See [Security policy](https://github.com/makeplane/plane/blob/master/SECURITY.md) for more info.
-
-To disclose any security issues, please email us at security@plane.so.
-
-## 🤝 Contributing
-
-There are many ways you can contribute to Plane:
-
-- Report [bugs](https://github.com/makeplane/plane/issues/new?assignees=srinivaspendem%2Cpushya22&labels=%F0%9F%90%9Bbug&projects=&template=--bug-report.yaml&title=%5Bbug%5D%3A+) or submit [feature requests](https://github.com/makeplane/plane/issues/new?assignees=srinivaspendem%2Cpushya22&labels=%E2%9C%A8feature&projects=&template=--feature-request.yaml&title=%5Bfeature%5D%3A+).
-- Review the [documentation](https://docs.plane.so/) and submit [pull requests](https://github.com/makeplane/docs) to improve it—whether it's fixing typos or adding new content.
-- Talk or write about Plane or any other ecosystem integration and [let us know](https://forum.plane.so)!
-- Show your support by upvoting [popular feature requests](https://github.com/makeplane/plane/issues).
-
-Please read [CONTRIBUTING.md](https://github.com/makeplane/plane/blob/master/CONTRIBUTING.md) for details on the process for submitting pull requests to us.
-
-### Repo activity
-
-![Plane Repo Activity](https://repobeats.axiom.co/api/embed/2523c6ed2f77c082b7908c33e2ab208981d76c39.svg "Repobeats analytics image")
-
-### We couldn't have done this without you.
-
-<a href="https://github.com/makeplane/plane/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=makeplane/plane" />
-</a>
-
-## License
-
-This project is licensed under the [GNU Affero General Public License v3.0](https://github.com/makeplane/plane/blob/master/LICENSE.txt).
+The upstream source is retained. The only upstream runtime change is a conditional Celery initialization guard in `apps/api/plane/__init__.py`; the `REVOPS_DESK` entrypoints avoid launching Plane's worker integration. This fork retains Plane's AGPL-3.0 license; see [LICENSE](LICENSE).

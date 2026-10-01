@@ -117,3 +117,11 @@ packages/i18n/src/types/keys.generated.ts
 
 # Local security notes (not for version control)
 /security/
+.env*
+
+# RevOps local runtime
+.venv/
+.venv-desk/
+.env*
+staticfiles/
+.superpowers/
