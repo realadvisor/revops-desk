@@ -9,6 +9,7 @@ import uuid
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import PurePath
+from http.client import HTTPException
 from urllib.error import URLError
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from urllib.parse import urlencode, urlsplit
@@ -222,7 +223,7 @@ def interactions(request):
                     form.cleaned_data['slack_attachments'] = slack_attachments(values.get('attachments',{}).get('input',{}).get('files') or [],slack_user)
                 except ValidationError as error:
                     return JsonResponse({'response_action':'errors', 'errors':{'attachments':error.messages[0]}})
-                except (URLError,TimeoutError):
+                except (URLError,TimeoutError,HTTPException):
                     return JsonResponse({'response_action':'errors', 'errors':{'attachments':'Slack could not download an attachment in time. Please try submitting again. Your ticket has not been created.'}})
             issue = create_request(project,actor,form.cleaned_data)
             link = login_link(request,project,actor,issue)
