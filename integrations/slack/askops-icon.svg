@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="1024" x2="1024" y2="0">
+      <stop offset="0" stop-color="#54beda"/><stop offset="1" stop-color="#0a39b7"/>
+    </linearGradient>
+    <linearGradient id="n" gradientUnits="userSpaceOnUse" x1="20.503" y1="119.498" x2="119.497" y2="20.503">
+      <stop offset="0" stop-color="#54beda"/><stop offset="1" stop-color="#0a39b7"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#g)"/>
+  <!-- speech bubble: a disc with a tail, bottom-left -->
+  <circle cx="512" cy="496" r="312" fill="#fff"/>
+  <path d="M352 762 L226 826 L262 668 Z" fill="#fff"/>
+  <!-- RealAdvisor compass needle, from the official symbol -->
+  <g transform="translate(212 196) scale(4.2857)">
+    <path fill="url(#n)" d="M50.09 56.82a9.903 9.903 0 0 1 6.72-6.72l46.88-13.79L89.9 83.18a9.903 9.903 0 0 1-6.72 6.72l-46.87 13.79 13.78-46.87z"/>
+  </g>
+</svg>

@@ -12,6 +12,8 @@ The requester gets a private message from the app when their ticket's status cha
 
 Downloads run in parallel with a short timeout to fit Slack's acknowledgement window. Unsupported, oversized or unavailable files keep the form open with an error and create no partial ticket. Submission retries return the existing ticket without downloading or attaching files twice.
 
+The app icon is `askops-icon.png` (source `askops-icon.svg`): the RealAdvisor compass needle in a speech bubble. Manifests cannot carry icons; upload it under Basic Information > Display Information.
+
 ## Connect the app
 
 1. Create an app from `manifest.json` in the RealAdvisor workspace; install it after reviewing the five scopes.
