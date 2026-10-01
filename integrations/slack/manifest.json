@@ -38,7 +38,8 @@
       "bot": [
         "commands",
         "users:read",
-        "users:read.email"
+        "users:read.email",
+        "files:read"
       ]
     }
   },

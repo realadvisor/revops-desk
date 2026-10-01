@@ -14,7 +14,7 @@ Existing manager roles are preserved. Guests, external/deactivated Slack users a
 
 ## Submit from Slack
 
-The Slack integration supports `/revops` and **Create RevOps ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. The dedicated app is installed in RealAdvisor Slack and configured for production.
+The Slack integration supports `/revops` and **Create RevOps ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. The Slack form accepts up to three attachments (PNG, JPG, PDF, CSV or TXT; 3 MB each), saved privately on the ticket. This requires approving the dedicated app's additional `files:read` scope before deploying the attachment-enabled form. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. The dedicated app is installed in RealAdvisor Slack and configured for production.
 
 ## Run locally
 

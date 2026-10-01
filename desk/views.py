@@ -152,6 +152,8 @@ def create_request(project, actor, data):
     history(issue, actor, "Submitted this request")
     if data.get("attachment"):
         save_attachment(issue, actor, data["attachment"])
+    for file in data.get("slack_attachments", []):
+        save_attachment(issue, actor, file)
     mark_seen(issue, actor)
     return issue
 

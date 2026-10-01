@@ -1,6 +1,9 @@
 import hashlib
 import hmac
 import json
+import io
+from email.message import Message
+from urllib.error import URLError
 import time
 from datetime import timedelta
 from urllib.parse import urlencode
@@ -10,7 +13,7 @@ from django.test import Client, TestCase, SimpleTestCase, override_settings
 from django.core.management import call_command
 from django.utils import timezone
 from plane.db.models import Project, Issue, Label, ProjectMember, User, WorkspaceMember
-from desk.models import SlackLogin, Invitation
+from desk.models import SlackLogin, Invitation, Attachment
 
 
 @override_settings(SECURE_SSL_REDIRECT=False, SLACK_SIGNING_SECRET='test-secret', SLACK_BOT_TOKEN='test-token', SLACK_TEAM_ID='TTEST', SLACK_APP_ID='ATEST')
@@ -141,6 +144,52 @@ class SlackTests(TestCase):
         self.assertEqual(Issue.objects.count(),0)
         body['view']['private_metadata']='tampered'
         self.assertEqual(self.post(body).status_code,403)
+
+    def test_slack_attachments_are_saved_privately_and_retries_do_not_duplicate(self):
+        modal=self.open_form()
+        upload=next(block for block in modal['blocks'] if block.get('block_id')=='attachments')
+        self.assertEqual(upload['element']['type'],'file_input')
+        body=self.submission(modal)
+        files=[{'id':f'FTEST{i}','name':f'context{i}.txt','size':5,'user':'UTEST','user_team':'TTEST',
+            'url_private_download':f'https://files.slack.com/files-pri/TTEST-FTEST{i}/download/context.txt'} for i in range(3)]
+        body['view']['state']['values']['attachments']={'input':{'type':'file_input','files':files}}
+        def download(request, **kwargs):
+            self.assertEqual(request.get_header('Authorization'),'Bearer test-token')
+            response=io.BytesIO(b'hello')
+            response.headers=Message()
+            response.headers['Content-Type']='text/plain'
+            return response
+        with patch('desk.slack.build_opener') as opener:
+            opener.return_value.open.side_effect=download
+            self.assertEqual(self.post(body).json()['response_action'],'update')
+            self.assertEqual(self.post(body).json()['response_action'],'update')
+            self.assertEqual(opener.return_value.open.call_count,3)
+        self.assertEqual(Issue.objects.count(),1)
+        self.assertEqual(Attachment.objects.count(),3)
+        file=Attachment.objects.first()
+        self.assertEqual(bytes(file.data),b'hello')
+        self.assertEqual(file.uploaded_by,self.project.project_lead)
+        self.assertEqual(Client().get(f'/files/{file.pk}/').status_code,302)
+        browser=Client()
+        browser.force_login(file.uploaded_by)
+        self.assertEqual(b''.join(browser.get(f'/files/{file.pk}/').streaming_content),b'hello')
+
+    def test_invalid_or_unavailable_files_preserve_form_without_partial_ticket(self):
+        body=self.submission(self.open_form())
+        good={'id':'FTEST','name':'context.txt','size':5,'user':'UTEST','user_team':'TTEST',
+            'url_private_download':'https://files.slack.com/files-pri/TTEST-FTEST/download/context.txt'}
+        for change in ({'size':3145729},{'name':'run.exe'},{'user':'OTHER'},{'user_team':'OTHER'},
+                       {'url_private_download':'https://evil.example/context.txt'}):
+            body['view']['state']['values']['attachments']={'input':{'files':[{**good,**change}]}}
+            with patch('desk.slack.build_opener') as opener:
+                self.assertIn('attachments',self.post(body).json()['errors'])
+                opener.assert_not_called()
+        body['view']['state']['values']['attachments']={'input':{'files':[good]}}
+        with patch('desk.slack.build_opener') as opener:
+            opener.return_value.open.side_effect=URLError('download unavailable')
+            self.assertIn('attachments',self.post(body).json()['errors'])
+        self.assertEqual(Issue.objects.count(),0)
+        self.assertEqual(Attachment.objects.count(),0)
 
     def test_command_and_message_shortcut_open_reviewable_forms(self):
         captured=[]

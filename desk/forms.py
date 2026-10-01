@@ -7,6 +7,8 @@ from plane.db.models import Label, State, User
 
 PRIORITIES = [("low", "Low — whenever possible"), ("medium", "Normal — plan it in"),
               ("high", "High — work is affected"), ("urgent", "Urgent — work is blocked")]
+ATTACHMENT_EXTENSIONS = {"png", "jpg", "jpeg", "pdf", "csv", "txt"}
+ATTACHMENT_MAX_BYTES = 3 * 1024 * 1024
 
 
 class NameChoice(forms.ModelChoiceField):
@@ -20,9 +22,9 @@ class AttachmentForm(forms.Form):
     def clean_attachment(self):
         file = self.cleaned_data.get("attachment")
         if file:
-            if not file.size or file.size > 3 * 1024 * 1024:
+            if not file.size or file.size > ATTACHMENT_MAX_BYTES:
                 raise forms.ValidationError("Choose a file between 1 byte and 3 MB.")
-            if PurePath(file.name).suffix.lower() not in {".png", ".jpg", ".jpeg", ".pdf", ".csv", ".txt"}:
+            if PurePath(file.name).suffix.lower().lstrip('.') not in ATTACHMENT_EXTENSIONS:
                 raise forms.ValidationError("Please attach a PNG, JPG, PDF, CSV or TXT file.")
         return file
 

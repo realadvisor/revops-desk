@@ -7,14 +7,17 @@ import secrets
 import time
 import uuid
 from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import PurePath
 from urllib.error import URLError
-from urllib.request import Request, urlopen
-from urllib.parse import urlencode
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
+from urllib.parse import urlencode, urlsplit
 
 from django.conf import settings
 from django.core import signing
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import validate_email
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
 from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
@@ -22,12 +25,52 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from plane.db.models import Project, ProjectMember, WorkspaceMember, User
-from desk.models import SlackLogin
-from desk.forms import RequestForm, PRIORITIES
+from desk.models import SlackLogin, RequestDetails
+from desk.forms import RequestForm, AttachmentForm, PRIORITIES, ATTACHMENT_EXTENSIONS, ATTACHMENT_MAX_BYTES
 from desk.views import create_request
 
 CALLBACK = 'revops_submit'
 SALT = 'desk.slack.modal'
+
+
+class NoFileRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # Never forward the bot credential to a redirected host.
+
+
+def read_slack_file(file):
+    url = file.get('url_private_download') or file.get('url_private', '')
+    parsed = urlsplit(url)
+    if (parsed.scheme != 'https' or parsed.netloc != 'files.slack.com' or
+        not parsed.path.startswith(f"/files-pri/{settings.SLACK_TEAM_ID}-{file['id']}/")):
+        raise ValidationError('This file is not a supported Slack upload. Please upload it again.')
+    request = Request(url, headers={'Authorization':'Bearer ' + settings.SLACK_BOT_TOKEN})
+    with build_opener(NoFileRedirect()).open(request, timeout=1) as response:
+        data = response.read(ATTACHMENT_MAX_BYTES + 1)
+        if response.headers.get_content_type() == 'text/html':
+            raise ValidationError('Slack could not provide this file. Please upload it again.')
+    if len(data) != file['size']:
+        raise ValidationError('The file download was incomplete or too large. Please try again.')
+    form = AttachmentForm({}, {'attachment':SimpleUploadedFile(file['name'],data)})
+    if not form.is_valid():
+        raise ValidationError(form.errors['attachment'][0])
+    return form.cleaned_data['attachment']
+
+
+def slack_attachments(files, slack_user):
+    if not isinstance(files,list) or len(files) > 3:
+        raise ValidationError('Choose up to 3 attachments.')
+    for file in files:
+        if (not isinstance(file,dict) or not file.get('id') or file.get('user') != slack_user or
+            file.get('user_team') != settings.SLACK_TEAM_ID or file.get('is_external')):
+            raise ValidationError('Please upload files from your own RealAdvisor Slack account.')
+        if not isinstance(file.get('size'),int) or not 0 < file['size'] <= ATTACHMENT_MAX_BYTES:
+            raise ValidationError('Each attachment must be between 1 byte and 3 MB.')
+        if PurePath(file.get('name','')).suffix.lower().lstrip('.') not in ATTACHMENT_EXTENSIONS:
+            raise ValidationError('Please attach PNG, JPG, PDF, CSV or TXT files.')
+    # ponytail: 3 small parallel downloads fit Slack's short acknowledgement window; use a durable queue for larger uploads.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        return list(pool.map(read_slack_file,files))
 
 
 def slack_api(method, **payload):
@@ -114,6 +157,9 @@ def request_modal(project, actor, slack_user, text=''):
     blocks.append({'type':'input', 'block_id':'requested_deadline', 'optional':True,
         'label':plain('Needed by'), 'hint':plain('Optional requested date, not a delivery commitment.'),
         'element':{'type':'datepicker', 'action_id':'input'}})
+    blocks.append({'type':'input', 'block_id':'attachments', 'optional':True,
+        'label':plain('Attachments'), 'hint':plain('Up to 3 files, 3 MB each. PNG, JPG, PDF, CSV or TXT. Files are shared with the ticket.'),
+        'element':{'type':'file_input', 'action_id':'input', 'filetypes':sorted(ATTACHMENT_EXTENSIONS), 'max_files':3}})
     metadata = signing.dumps({'user':slack_user, 'actor':str(actor.pk), 'key':str(uuid.uuid4())}, salt=SALT)
     return {'type':'modal', 'callback_id':CALLBACK, 'title':plain('New RevOps request'), 'submit':plain('Submit request'),
             'close':plain('Cancel'), 'private_metadata':metadata, 'blocks':blocks}
@@ -171,6 +217,13 @@ def interactions(request):
             form = RequestForm(data,project=project)
             if not form.is_valid():
                 return JsonResponse({'response_action':'errors', 'errors':{key:str(errors[0]) for key,errors in form.errors.items()}})
+            if not RequestDetails.objects.filter(submission_key=data['submission_key']).exists():
+                try:
+                    form.cleaned_data['slack_attachments'] = slack_attachments(values.get('attachments',{}).get('input',{}).get('files') or [],slack_user)
+                except ValidationError as error:
+                    return JsonResponse({'response_action':'errors', 'errors':{'attachments':error.messages[0]}})
+                except (URLError,TimeoutError):
+                    return JsonResponse({'response_action':'errors', 'errors':{'attachments':'Slack could not download an attachment in time. Please try submitting again. Your ticket has not been created.'}})
             issue = create_request(project,actor,form.cleaned_data)
             link = login_link(request,project,actor,issue)
             return JsonResponse({'response_action':'update', 'view':notice(f'REV-{issue.sequence_id} submitted. You can follow its progress and add updates in RevOps Desk.',link)})
