@@ -1,7 +1,8 @@
 from django.urls import path
-from desk import views
+from desk import views, slack
 
 urlpatterns = [
+    path("slack/interactions/", slack.interactions, name="slack"),
     path("", views.queue, name="queue"),
     path("login/", views.sign_in, name="login"),
     path("logout/", views.sign_out, name="logout"),

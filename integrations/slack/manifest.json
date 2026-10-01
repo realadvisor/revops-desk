@@ -1,0 +1,54 @@
+{
+  "display_information": {
+    "name": "RevOps Desk",
+    "description": "Submit a RevOps request and follow its progress.",
+    "background_color": "#5056ce"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "RevOps Desk",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/revops",
+        "description": "Submit a RevOps request",
+        "usage_hint": "[short description]",
+        "url": "https://revops-desk.vercel.app/slack/interactions/",
+        "should_escape": false
+      }
+    ],
+    "shortcuts": [
+      {
+        "name": "Create RevOps ticket",
+        "type": "global",
+        "callback_id": "revops_create",
+        "description": "Submit a request to the RevOps team"
+      },
+      {
+        "name": "Create RevOps ticket",
+        "type": "message",
+        "callback_id": "revops_message",
+        "description": "Turn this message into a RevOps request"
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "commands",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://revops-desk.vercel.app/slack/interactions/"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

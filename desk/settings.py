@@ -65,3 +65,9 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 4 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 3 * 1024 * 1024
 FILE_SIZE_LIMIT = 3 * 1024 * 1024
 CELERY_TASK_ALWAYS_EAGER = True
+
+# A dedicated Slack app; keep these credentials out of preview deployments.
+SLACK_SIGNING_SECRET = os.environ.get("REVOPS_SLACK_SIGNING_SECRET", "")
+SLACK_BOT_TOKEN = os.environ.get("REVOPS_SLACK_BOT_TOKEN", "")
+SLACK_TEAM_ID = os.environ.get("REVOPS_SLACK_TEAM_ID", "")
+SLACK_APP_ID = os.environ.get("REVOPS_SLACK_APP_ID", "")

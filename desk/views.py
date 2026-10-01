@@ -127,29 +127,42 @@ def queue(request):
         "columns": [(state, [issue for issue in page if issue.state_id == state.pk]) for state in states] if layout == "board" else []})
 
 
+@transaction.atomic
+def create_request(project, actor, data):
+    """One validated submission path for the web form and Slack."""
+    Project.objects.select_for_update().get(pk=project.pk)
+    if not actor.is_active or not ProjectMember.objects.filter(project=project, member=actor, is_active=True).exists():
+        raise PermissionDenied
+    existing = RequestDetails.objects.filter(submission_key=data["submission_key"]).select_related("issue").first()
+    if existing:
+        if existing.issue.created_by_id != actor.pk or existing.issue.project_id != project.pk:
+            raise ValueError("Invalid submission reference")
+        return existing.issue
+    issue = Issue(project=project, name=data["title"], description_html=f"<p>{escape(data['description'])}</p>",
+        priority=data["priority"], state=project.default_state)
+    issue.save(created_by_id=actor.pk)
+    RequestDetails.objects.create(issue=issue, topic=data["topic"], country=data["country"],
+        requested_deadline=data["requested_deadline"], submission_key=data["submission_key"])
+    for label in (data["topic"], data["country"]):
+        IssueLabel.objects.create(project=project, issue=issue, label=label)
+    if project.default_assignee_id:
+        IssueAssignee.objects.create(project=project, issue=issue, assignee=project.default_assignee)
+    history(issue, actor, "Submitted this request")
+    if data.get("attachment"):
+        save_attachment(issue, actor, data["attachment"])
+    mark_seen(issue, actor)
+    return issue
+
+
 @team_required
 def new_request(request):
     form = RequestForm(request.POST or None, request.FILES or None, project=request.project)
     if request.method == "POST" and form.is_valid():
         data = form.cleaned_data
-        with transaction.atomic():
-            # The project lock also makes idempotent submission safe across concurrent requests.
-            type(request.project).objects.select_for_update().get(pk=request.project.pk)
-            existing = RequestDetails.objects.filter(submission_key=data["submission_key"]).select_related("issue").first()
-            if existing:
-                if existing.issue.created_by_id != request.user.pk or existing.issue.project_id != request.project.pk:
-                    return HttpResponse("Invalid submission reference.", status=400)
-                return redirect("detail", pk=existing.issue_id)
-            issue = Issue.objects.create(project=request.project, name=data["title"], description_html=f"<p>{escape(data['description'])}</p>", priority=data["priority"], state=request.project.default_state)
-            RequestDetails.objects.create(issue=issue, topic=data["topic"], country=data["country"], requested_deadline=data["requested_deadline"], submission_key=data["submission_key"])
-            for label in (data["topic"], data["country"]):
-                IssueLabel.objects.create(project=request.project, issue=issue, label=label)
-            if request.project.default_assignee_id:
-                IssueAssignee.objects.create(project=request.project, issue=issue, assignee=request.project.default_assignee)
-            history(issue, request.user, "Submitted this request")
-            if data.get("attachment"):
-                save_attachment(issue, request.user, data["attachment"])
-            mark_seen(issue, request.user)
+        try:
+            issue = create_request(request.project, request.user, data)
+        except ValueError:
+            return HttpResponse("Invalid submission reference.", status=400)
         messages.success(request, f"Request REV-{issue.sequence_id} submitted. You can follow every update here.")
         return redirect("detail", pk=issue.pk)
     return render(request, "desk/new.html", {"form": form}, status=400 if request.method == "POST" else 200)

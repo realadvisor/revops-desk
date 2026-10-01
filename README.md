@@ -10,6 +10,10 @@ Stakeholders submit a topic, country, urgency and optional requested deadline, t
 
 The owner starts with a private, one-use activation link and chooses their own password. In **Team**, create a requester or manager invitation and share the generated link directly. Links expire after seven days. A new invitation to the same email invalidates the previous link and can reset a forgotten password. Removing a member revokes access immediately. No invitation emails or Slack messages are sent automatically.
 
+## Submit from Slack
+
+The Slack integration supports `/revops` and **Create RevOps ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. It stays disabled until its dedicated app is installed and credentials are configured.
+
 ## Run locally
 
 Use Python 3.12 and an isolated PostgreSQL database. Never point development or tests at another application's database.
