@@ -24,7 +24,7 @@
 - [x] 1. Runtime and data: root manage.py, requirements.txt, desk/settings.py, desk/models.py, desk/migrations, desk/management/commands/bootstrap_desk.py. Reuse plane.db; add only desk metadata and access support. Run Django check, migration and bootstrap twice to prove idempotency.
 - [x] 2. Behaviors: write desk/tests.py before desk/forms.py and desk/views.py. Test create → manager update → comment → attachment → read receipt using Django TestCase on a isolated test database. Test forbidden mutation, bad category/date, stale update, invite replay and authentication. Run `python manage.py test desk --keepdb` and observe failing then passing assertions.
 - [x] 3. Interface: desk/templates/desk and desk/static/desk. Implement accessible form, searchable list, board, detail timeline, team invitations and login. Validate request error preservation, empty states and mobile layouts in the browser.
-- [ ] 4. Delivery: Vercel Django configuration, dedicated database and generated secrets. Commit and push the ready fork. Deploy, verify authenticated end-to-end workflow and anonymous denials, remove verification records, document URL and owner activation link locally.
+- [x] 4. Delivery: Vercel Django configuration, dedicated database and generated secrets. Commit and push the ready fork. Deploy, verify authenticated end-to-end workflow and anonymous denials, remove verification records, document URL and owner activation link locally.
 
 ## Execution ledger
 - Fork created in realadvisor/revops-desk. Dedicated checkout /Users/realadvisor/dev/revops-desk, branch revops. Upstream GitHub Actions disabled on this new fork to prevent unrelated workflows.
@@ -33,3 +33,4 @@
 
 - Verified six database integration tests, including concurrent invitation/revocation races. Review findings fixed: serialize project access changes, recheck manager access inside the lock, and record the rendered issue version for read receipts.
 - Production is live on revops-desk.vercel.app. Real browser checks covered desktop/mobile, manager updates and requester submission/discussion. Dedicated preview database migrated and bound separately.
+- Delivery complete: GitHub and Vercel production branch are revops; live deployment verified, test records/accounts/sessions removed, owner activation link kept in an ignored local file. Production and preview DATABASE_URL entries independently verified.
