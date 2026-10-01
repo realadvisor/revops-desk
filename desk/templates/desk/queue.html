@@ -1,6 +1,6 @@
 {% extends 'desk/base.html' %}{% block title %}{{ title }}{% endblock %}
 {% block content %}<section class="page queue-page">
-<div class="page-heading"><div><div class="eyebrow">REVOPS WORKSPACE</div><h1>{{ title }}</h1><p>Clear requests. Visible progress. Less back-and-forth.</p></div><a class="button primary" href="{% url 'new' %}">＋ New request</a></div>
+<div class="page-heading"><div><div class="eyebrow">REALADVISOR OPS DESK</div><h1>{{ title }}</h1><p>Clear requests. Visible progress. Less back-and-forth.</p></div><a class="button primary" href="{% url 'new' %}">＋ New request</a></div>
 <div class="overview"><a href="/?view=new"><span>To review</span><strong>{{ counts.new }}</strong><small>New requests</small></a><a href="/?view=active"><span>Moving forward</span><strong>{{ counts.active }}</strong><small>In progress</small></a><a href="/?view=waiting"><span>Needs a response</span><strong>{{ counts.waiting }}</strong><small>Waiting</small></a><a href="/?view=overdue" class="{% if counts.overdue %}is-overdue{% endif %}"><span>Needs attention</span><strong>{{ counts.overdue }}</strong><small>Past due date</small></a></div>
 <div class="queue-panel"><form class="filters" method="get" action="/" role="search"><input type="hidden" name="view" value="{{ selected }}"><input type="hidden" name="layout" value="{{ layout }}">
 <div class="search-field"><span aria-hidden="true">⌕</span><input name="q" type="search" value="{{ search }}" placeholder="Search requests…" aria-label="Search requests" id="request-search"><kbd>/</kbd></div>

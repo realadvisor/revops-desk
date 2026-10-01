@@ -60,6 +60,11 @@ def history(issue, actor, text, field=None, old=None, new=None):
         field=field, old_value=old, new_value=new, comment=text)
 
 
+def notify_requester(request, issue, text):
+    from desk.slack import notify  # desk.slack imports this module.
+    notify(issue, request.user, text, request.build_absolute_uri(reverse("detail", args=[issue.pk])))
+
+
 def save_attachment(issue, actor, file):
     attachment = Attachment.objects.create(issue=issue, name=PurePath(file.name).name[:180], data=file.read(), size=file.size, uploaded_by=actor)
     history(issue, actor, f"Attached {attachment.name}", "attachment")
@@ -207,6 +212,7 @@ def manage_request(request, pk):
             messages.error(request, "This request changed while you were editing. Review the latest values below and save again.")
             return detail_response(request, issue, status=409)
         data = form.cleaned_data
+        updates = []
         for field, name in [("state", "Status"), ("priority", "Priority"), ("target_date", "Delivery date")]:
             old, new = getattr(issue, field), data[field]
             if old != new:
@@ -214,6 +220,8 @@ def manage_request(request, pk):
                 after = new.name if field == "state" else str(new or "Not set")
                 history(issue, request.user, f"{name}: {before} → {after}", field, before, after)
                 setattr(issue, field, new)
+                if field != "priority":
+                    updates.append(f"{name}: {before} → {after}")
         old_assignee = issue.assignees.first()
         if old_assignee != data["assignee"]:
             issue.issue_assignee.all().delete(soft=False)
@@ -224,6 +232,8 @@ def manage_request(request, pk):
             history(issue, request.user, f"Owner: {before} → {after}", "assignee", before, after)
         issue.save()
         mark_seen(issue, request.user)
+    if updates:
+        notify_requester(request, issue, "\n".join(updates))
     messages.success(request, "Request updated.")
     return redirect("detail", pk=pk)
 
@@ -239,6 +249,7 @@ def add_comment(request, pk):
         IssueComment.objects.create(project=request.project, issue=issue, actor=request.user, comment_html=f"<p>{escape(form.cleaned_data['comment'])}</p>")
         issue.save()
         mark_seen(issue, request.user)
+    notify_requester(request, issue, f"{request.user.first_name or request.user.email} replied: {form.cleaned_data['comment'][:500]}")
     return redirect("detail", pk=pk)
 
 
@@ -264,7 +275,9 @@ def add_attachment(request, pk):
 @team_required
 def download(request, pk):
     file = get_object_or_404(Attachment, pk=pk, issue__project=request.project)
-    return FileResponse(io.BytesIO(bytes(file.data)), as_attachment=True, filename=file.name, content_type="application/octet-stream")
+    # Previews only ever get a fixed type chosen from the extension, with nosniff, so uploads cannot run as HTML.
+    inline = file.inline_type if "inline" in request.GET else ""
+    return FileResponse(io.BytesIO(bytes(file.data)), as_attachment=not inline, filename=file.name, content_type=inline or "application/octet-stream")
 
 
 def make_invitation(project, creator, email, name, role):
@@ -344,7 +357,7 @@ def join(request, token):
             invite.used_at = timezone.now()
             invite.save(update_fields=["used_at"])
             login(request, user)
-            messages.success(request, "You're in. Welcome to RevOps Desk.")
+            messages.success(request, "You're in. Welcome to RealAdvisor Ops Desk.")
             return redirect("queue")
     return render(request, "desk/auth.html", {"activation": True, "form": form, "invite": invite}, status=400 if form.errors else 200)
 

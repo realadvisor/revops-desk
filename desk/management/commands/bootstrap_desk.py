@@ -10,7 +10,7 @@ STATES = [("New", "backlog", "#737d8b"), ("Planned", "unstarted", "#5271bf"),
 
 
 class Command(BaseCommand):
-    help = "Idempotently initialize this isolated RevOps Desk instance."
+    help = "Idempotently initialize this isolated RealAdvisor Ops Desk instance."
 
     def add_arguments(self, parser):
         parser.add_argument("--email", required=True)

@@ -86,12 +86,28 @@ def slack_api(method, **payload):
     return data
 
 
+def notify(issue, actor, text, link):
+    """Private DM to the requester about their own ticket; never blocks or fails the save."""
+    requester = issue.created_by
+    if not settings.SLACK_BOT_TOKEN or not requester or requester.pk == actor.pk:
+        return
+    def safe(value):  # Slack control characters: no injected links or mentions.
+        return str(value).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+    try:
+        # ponytail: two synchronous Slack calls (2 s timeout each) per update; use a queue if saves feel slow.
+        user = slack_api('users.lookupByEmail', email=requester.email)['user']['id']
+        slack_api('chat.postMessage', channel=user,
+            text=f'*REV-{issue.sequence_id} · {safe(issue.name)}*\n{safe(text)}\n<{link}|Open ticket>')
+    except (URLError, TimeoutError, HTTPException, KeyError, TypeError) as error:
+        logging.getLogger(__name__).warning('Slack notification failure: %s', error)
+
+
 def plain(text):
     return {'type': 'plain_text', 'text': text}
 
 
 def notice(text, link=None):
-    view = {'type':'modal', 'title':plain('RevOps Desk'), 'close':plain('Close'),
+    view = {'type':'modal', 'title':plain('RealAdvisor Ops Desk'), 'close':plain('Close'),
             'blocks':[{'type':'section', 'text':plain(text)}]}
     if link:
         view['blocks'].append({'type':'actions', 'elements':[{'type':'button', 'action_id':'open_desk',
@@ -138,7 +154,7 @@ def login_link(request, project, actor, issue=None):
 
 def request_modal(project, actor, slack_user, text=''):
     form = RequestForm(project=project)
-    blocks = [{'type':'section', 'text':plain('Your request and the text you submit will be visible to everyone in RevOps Desk.')}]
+    blocks = [{'type':'section', 'text':plain('Your request and the text you submit will be visible to everyone in RealAdvisor Ops Desk.')}]
     for name, label, multiline, limit in [('title','What do you need?',False,200), ('description','A little context',True,3000)]:
         element = {'type':'plain_text_input', 'action_id':'input', 'multiline':multiline, 'max_length':limit}
         initial = text[:limit] if multiline else (text.splitlines()[0][:limit] if text else '')
@@ -149,7 +165,7 @@ def request_modal(project, actor, slack_user, text=''):
         choices = PRIORITIES if name == 'priority' else [(str(row.pk),row.name) for row in form.fields[name].queryset]
         # Slack caps static selects at 100 options; fail visibly rather than omit maintained categories.
         if not 0 < len(choices) <= 100:
-            return notice('This form has too many categories for Slack. Please use RevOps Desk in your browser.')
+            return notice('This form has too many categories for Slack. Please use Ops Desk in your browser.')
         options = [{'text':plain(label[:75]), 'value':str(value)} for value,label in choices]
         element = {'type':'static_select', 'action_id':'input', 'options':options}
         if name == 'priority':
@@ -162,7 +178,7 @@ def request_modal(project, actor, slack_user, text=''):
         'label':plain('Attachments'), 'hint':plain('Up to 3 files, 3 MB each. PNG, JPG, PDF, CSV or TXT. Files are shared with the ticket.'),
         'element':{'type':'file_input', 'action_id':'input', 'filetypes':sorted(ATTACHMENT_EXTENSIONS), 'max_files':3}})
     metadata = signing.dumps({'user':slack_user, 'actor':str(actor.pk), 'key':str(uuid.uuid4())}, salt=SALT)
-    return {'type':'modal', 'callback_id':CALLBACK, 'title':plain('New RevOps request'), 'submit':plain('Submit request'),
+    return {'type':'modal', 'callback_id':CALLBACK, 'title':plain('New Ops Desk request'), 'submit':plain('Submit request'),
             'close':plain('Cancel'), 'private_metadata':metadata, 'blocks':blocks}
 
 
@@ -227,7 +243,7 @@ def interactions(request):
                     return JsonResponse({'response_action':'errors', 'errors':{'attachments':'Slack could not download an attachment in time. Please try submitting again. Your ticket has not been created.'}})
             issue = create_request(project,actor,form.cleaned_data)
             link = login_link(request,project,actor,issue)
-            return JsonResponse({'response_action':'update', 'view':notice(f'REV-{issue.sequence_id} submitted. You can follow its progress and add updates in RevOps Desk.',link)})
+            return JsonResponse({'response_action':'update', 'view':notice(f'REV-{issue.sequence_id} submitted. You can follow its progress and add updates in Ops Desk.',link)})
         if not (payload.get('command') == '/revops' or
                 payload.get('type') in ('shortcut','message_action') and payload.get('callback_id') in ('revops_create','revops_message')):
             return HttpResponse(status=400)
@@ -249,4 +265,4 @@ def interactions(request):
         return HttpResponse('Invalid Slack request.',status=400)
     except (URLError,TimeoutError) as error:
         logging.getLogger(__name__).warning("Slack intake API failure: %s", error)
-        return JsonResponse({'response_type':'ephemeral', 'text':'Slack could not open the form. Please try /revops again, or use RevOps Desk in your browser.'},status=503)
+        return JsonResponse({'response_type':'ephemeral', 'text':'Slack could not open the form. Please try /revops again, or use Ops Desk in your browser.'},status=503)

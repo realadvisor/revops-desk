@@ -1,4 +1,5 @@
 import uuid
+from pathlib import PurePath
 from django.conf import settings
 from django.db import models
 
@@ -20,6 +21,11 @@ class Attachment(models.Model):
     size = models.PositiveIntegerField()
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def inline_type(self):
+        return {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf",
+                "txt": "text/plain; charset=utf-8", "csv": "text/plain; charset=utf-8"}.get(PurePath(self.name).suffix.lower().lstrip("."), "")
 
 
 class Invitation(models.Model):

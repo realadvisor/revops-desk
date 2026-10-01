@@ -1,9 +1,9 @@
 {% load static %}<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#f7f8fa"><title>{% block title %}RevOps Desk{% endblock %} · RealAdvisor</title><link rel="stylesheet" href="{% static 'desk/app.css' %}"><script defer src="{% static 'desk/app.js' %}"></script></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#f7f8fa"><title>{% block title %}Requests{% endblock %} · RealAdvisor Ops Desk</title><link rel="stylesheet" href="{% static 'desk/app.css' %}"><script defer src="{% static 'desk/app.js' %}"></script></head>
 <body><a class="skip" href="#main">Skip to content</a>
 {% if desk_member %}
 <aside class="sidebar">
-  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">r<span>a</span></span><span>RealAdvisor<small>RevOps Desk</small></span></a>
+  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">r<span>a</span></span><span>RealAdvisor<small>Ops Desk</small></span></a>
   <a class="button primary new-button" href="{% url 'new' %}"><span aria-hidden="true">＋</span> New request <kbd>N</kbd></a>
   <nav aria-label="Main navigation">
     <span class="nav-label">Workspace</span>
@@ -22,7 +22,7 @@
   <div class="sidebar-bottom"><div class="workspace-note">One place for requests.<br>One less Slack thread.</div><div class="profile"><span class="avatar">{{ request.user.first_name|default:request.user.email|slice:':1'|upper }}</span><div><strong>{{ request.user.first_name|default:request.user.email }}</strong><small>{% if is_manager %}RevOps manager{% else %}Team member{% endif %}</small></div><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="icon-button" title="Sign out" aria-label="Sign out">↪</button></form></div></div>
 </aside>{% endif %}
 <div class="{% if desk_member %}app-shell{% else %}auth-shell{% endif %}">
-{% if desk_member %}<header class="topbar"><span class="breadcrumb">Workspace <span>/</span> <strong>RevOps</strong></span><span class="private-label"><span class="lock" aria-hidden="true">▣</span> Internal workspace</span><form class="mobile-signout" method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="text-button" aria-label="Sign out">Sign out</button></form></header>{% endif %}
+{% if desk_member %}<header class="topbar"><span class="breadcrumb">RealAdvisor <span>/</span> <strong>Ops Desk</strong></span><span class="private-label"><span class="lock" aria-hidden="true">▣</span> Internal workspace</span><form class="mobile-signout" method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="text-button" aria-label="Sign out">Sign out</button></form></header>{% endif %}
 <main id="main" tabindex="-1">{% if messages %}<div class="messages" aria-live="polite">{% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% block content %}{% endblock %}</main>
 {% if desk_member %}<footer class="app-footer">RealAdvisor · Revenue Operations <a href="https://github.com/realadvisor/revops-desk" target="_blank" rel="noopener noreferrer">Built on Plane · Source</a></footer>{% endif %}
 </div></body></html>

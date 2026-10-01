@@ -1,6 +1,8 @@
 import hashlib
 import secrets
 from datetime import timedelta
+from unittest.mock import patch
+from urllib.error import URLError
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
@@ -69,6 +71,61 @@ class DeskTests(TestCase):
         self.assertEqual(anonymous.get(f"/files/{file.pk}/").status_code, 302)
         self.assertEqual(anonymous.get(url).status_code, 302)
         self.assertGreaterEqual(ticket.issue_activity.count(), 4)
+
+    def test_requester_gets_private_slack_updates(self):
+        ticket = self.create_ticket()
+        url = f"/requests/{ticket.pk}/"
+        sent = []
+        def api(method, **kwargs):
+            sent.append((method, kwargs))
+            return {"user": {"id": "UREQ"}}
+        with override_settings(SLACK_BOT_TOKEN="test-token"), patch("desk.slack.slack_api", side_effect=api):
+            self.client.post(url + "comment/", {"comment": "One more detail"})
+            self.assertEqual(sent, [])  # Nobody is told about their own change.
+            self.client.force_login(self.manager)
+            ticket.refresh_from_db()
+            data = {"state": str(State.objects.get(project=self.project, name="In progress").pk),
+                    "priority": "high", "assignee": str(self.manager.pk), "target_date": "2030-01-02",
+                    "version": ticket.updated_at.isoformat()}
+            self.assertEqual(self.client.post(url + "manage/", data).status_code, 302)
+            self.assertEqual(sent[0], ("users.lookupByEmail", {"email": "requester@example.com"}))
+            self.assertEqual([method for method, _ in sent], ["users.lookupByEmail", "chat.postMessage"])
+            message = sent[1][1]
+            self.assertEqual(message["channel"], "UREQ")
+            self.assertIn("REV-%s" % ticket.sequence_id, message["text"])
+            self.assertIn("Status: New → In progress", message["text"])
+            self.assertIn("Delivery date: Not set → 2030-01-02", message["text"])
+            self.assertNotIn("Priority", message["text"])
+            self.assertIn("http://testserver" + url, message["text"])
+            sent.clear()
+            ticket.refresh_from_db()
+            self.assertEqual(self.client.post(url + "manage/", {**data, "priority": "low", "version": ticket.updated_at.isoformat()}).status_code, 302)
+            self.assertEqual(sent, [])  # Priority and owner changes stay in the app.
+            self.client.post(url + "comment/", {"comment": "On it <!channel>"})
+            self.assertIn("On it &lt;!channel&gt;", sent[-1][1]["text"])
+        with override_settings(SLACK_BOT_TOKEN="test-token"), patch("desk.slack.slack_api", side_effect=URLError("down")):
+            self.assertEqual(self.client.post(url + "comment/", {"comment": "Still saved"}).status_code, 302)
+        self.assertEqual(ticket.issue_comments.count(), 3)
+
+    def test_attachments_preview_inline_with_fixed_content_types(self):
+        ticket = self.create_ticket()
+        url = f"/requests/{ticket.pk}/"
+        for name in ("shot.PNG", "page.html.txt"):
+            self.assertEqual(self.client.post(url + "attachment/", {"attachment": SimpleUploadedFile(name, b"<script>alert(1)</script>")}).status_code, 302)
+        image, text = Attachment.objects.filter(issue=ticket).order_by("created_at")
+        response = self.client.get(f"/files/{image.pk}/?inline")
+        self.assertEqual(response["Content-Type"], "image/png")
+        self.assertTrue(response["Content-Disposition"].startswith("inline"))
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(self.client.get(f"/files/{text.pk}/?inline")["Content-Type"], "text/plain; charset=utf-8")
+        download = self.client.get(f"/files/{image.pk}/")
+        self.assertEqual(download["Content-Type"], "application/octet-stream")
+        self.assertTrue(download["Content-Disposition"].startswith("attachment"))
+        page = self.client.get(url)
+        self.assertContains(page, f'<img src="/files/{image.pk}/?inline"')
+        self.assertNotContains(page, f'<img src="/files/{text.pk}/?inline"')
+        self.assertContains(page, f'href="/files/{text.pk}/?inline"')
+        self.assertEqual(Client().get(f"/files/{image.pk}/?inline").status_code, 302)
 
     def test_invalid_inputs_and_duplicate_submission(self):
         data = self.payload()

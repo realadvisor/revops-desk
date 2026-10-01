@@ -1,4 +1,4 @@
-# RealAdvisor RevOps Desk
+# RealAdvisor Ops Desk
 
 A lightweight request desk for everyone in RealAdvisor Slack built on [Plane](https://github.com/makeplane/plane).
 
@@ -15,6 +15,8 @@ Existing manager roles are preserved. Guests, external/deactivated Slack users a
 ## Submit from Slack
 
 The Slack integration supports `/revops` and **Create RevOps ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. The Slack form accepts up to three attachments (PNG, JPG, PDF, CSV or TXT; 3 MB each), saved privately on the ticket. This requires approving the dedicated app's additional `files:read` scope before deploying the attachment-enabled form. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. The dedicated app is installed in RealAdvisor Slack and configured for production.
+
+Requesters get a private Slack message from the app when their ticket's status or delivery date changes or someone else comments on it. Image attachments are previewed on the request page; PDF, CSV and TXT files open in a browser tab.
 
 ## Run locally
 

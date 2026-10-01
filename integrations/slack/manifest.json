@@ -1,12 +1,17 @@
 {
   "display_information": {
-    "name": "RevOps Desk",
-    "description": "Submit a RevOps request and follow its progress.",
+    "name": "RealAdvisor Ops Desk",
+    "description": "Submit a request to RevOps and follow its progress.",
     "background_color": "#5056ce"
   },
   "features": {
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": true
+    },
     "bot_user": {
-      "display_name": "RevOps Desk",
+      "display_name": "RealAdvisor Ops Desk",
       "always_online": false
     },
     "slash_commands": [
@@ -39,7 +44,8 @@
         "commands",
         "users:read",
         "users:read.email",
-        "files:read"
+        "files:read",
+        "chat:write"
       ]
     }
   },
