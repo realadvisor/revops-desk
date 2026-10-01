@@ -255,6 +255,11 @@ class SlackTests(TestCase):
             self.assertEqual(self.post(command).status_code,200)
             self.assertEqual(captured[-1]['blocks'][1]['element']['initial_value'],'Dashboard filter')
             self.assertEqual(self.post({**command,'command':'/other'}).status_code,400)
+            # Slack's shortcut payloads carry no app id; the signature already proves the app.
+            shortcut={key:value for key,value in self.start().items() if key != 'api_app_id'}
+            self.assertEqual(self.post(shortcut).status_code,200)
+            self.assertEqual(captured[-1]['callback_id'],'revops_submit')
+            self.assertEqual(self.post({**shortcut,'api_app_id':'OTHER'}).status_code,403)
             self.assertEqual(self.post(self.start(type='message_action',callback_id='revops_message',message={'text':'Please fix this invoice.\nHere is the context.'})).status_code,200)
             self.assertEqual(captured[-1]['blocks'][2]['element']['initial_value'],'Please fix this invoice.\nHere is the context.')
         self.assertEqual(Issue.objects.count(),0)

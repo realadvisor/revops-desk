@@ -226,11 +226,11 @@ def verified_payload(request):
     except ValueError:
         fresh = False
     if not fresh or len(request.body) > 128 * 1024:
-        raise PermissionDenied
+        raise PermissionDenied('stale timestamp or oversized body')
     expected = 'v0=' + hmac.new(settings.SLACK_SIGNING_SECRET.encode(),
         b'v0:' + timestamp.encode() + b':' + request.body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, request.headers.get('X-Slack-Signature','')):
-        raise PermissionDenied
+        raise PermissionDenied('bad signature')
     if request.content_type == 'application/json':  # Events API
         payload = json.loads(request.body)
     else:
@@ -240,14 +240,16 @@ def verified_payload(request):
     if payload.get('type') == 'url_verification':
         return payload  # Slack's signed endpoint check carries no workspace or app id.
     team = payload.get('team',{}).get('id') or payload.get('team_id')
-    if team != settings.SLACK_TEAM_ID or payload.get('api_app_id') != settings.SLACK_APP_ID:
-        raise PermissionDenied
+    # Shortcut payloads carry no app id; the signing secret is per app, so the signature already proves the app.
+    if team != settings.SLACK_TEAM_ID or payload.get('api_app_id',settings.SLACK_APP_ID) != settings.SLACK_APP_ID:
+        raise PermissionDenied('wrong workspace or app')
     return payload
 
 
 @csrf_exempt  # Slack HMAC authenticates the exact body, workspace and app; browser sessions cannot authorize this route.
 @require_POST
 def interactions(request):
+    payload = None
     try:
         payload = verified_payload(request)
         if payload is None:
@@ -311,7 +313,9 @@ def interactions(request):
             modal = notice(NO_ACCESS)
         slack_api('views.open', trigger_id=payload['trigger_id'], view=modal)
         return HttpResponse()
-    except (signing.BadSignature, PermissionDenied):
+    except (signing.BadSignature, PermissionDenied) as error:
+        logging.getLogger(__name__).warning('Slack request refused (%s): %s',
+            payload.get('type') or 'command' if payload else 'unverified', str(error) or type(error).__name__)
         return HttpResponse('Not authorized.',status=403)
     except (ValueError,KeyError,TypeError,AttributeError):
         return HttpResponse('Invalid Slack request.',status=400)
