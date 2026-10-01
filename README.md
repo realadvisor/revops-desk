@@ -1,18 +1,20 @@
 # RealAdvisor RevOps Desk
 
-A lightweight, invitation-only request desk built on [Plane](https://github.com/makeplane/plane).
+A lightweight request desk for everyone in RealAdvisor Slack built on [Plane](https://github.com/makeplane/plane).
 
 **Live:** https://revops-desk.vercel.app · **Source:** https://github.com/realadvisor/revops-desk
 
-Stakeholders submit a topic, country, urgency and optional requested deadline, then follow status and discussion. Managers triage one shared queue, assign an owner, set a delivery date and manage invitations. List and board views include search, filters and unread indicators. All invited members can read all requests; do not put restricted HR or personal records in the shared queue.
+Stakeholders submit a topic, country, urgency and optional requested deadline, then follow status and discussion. Managers triage one shared queue, assign an owner, set a delivery date and manage access. List and board views include search, filters and unread indicators. All desk members can read all requests; do not put restricted HR or personal records in the shared queue.
 
 ## Owner and team access
 
-The owner starts with a private, one-use activation link and chooses their own password. In **Team**, create a requester or manager invitation and share the generated link directly. Links expire after seven days. A new invitation to the same email invalidates the previous link and can reset a forgotten password. Removing a member revokes access immediately. No invitation emails or Slack messages are sent automatically.
+RealAdvisor Slack members join automatically as requesters on their first `/revops` command. No invitation or password is needed. **My requests** in the Slack form and **Open ticket** after submission provide private, one-use browser sign-in links (15-minute expiry). Opening a link shows a confirmation button; pressing it signs in for the normal 30-day session. Run `/revops` again for a fresh link.
+
+Existing manager roles are preserved. Guests, external/deactivated Slack users and manually removed Desk accounts cannot join automatically. Team & access lists members and lets managers remove access. Legacy activation/password login remains available for owner recovery, but it is not part of stakeholder onboarding.
 
 ## Submit from Slack
 
-The Slack integration supports `/revops` and **Create RevOps ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. It stays disabled until its dedicated app is installed and credentials are configured.
+The Slack integration supports `/revops` and **Create RevOps ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. The dedicated app is installed in RealAdvisor Slack and configured for production.
 
 ## Run locally
 

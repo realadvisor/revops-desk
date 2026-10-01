@@ -3,19 +3,26 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 import time
 import uuid
+from datetime import timedelta
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core import signing
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.validators import validate_email
+from django.db import transaction
 from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from plane.db.models import Project, ProjectMember, User
+from plane.db.models import Project, ProjectMember, WorkspaceMember, User
+from desk.models import SlackLogin
 from desk.forms import RequestForm, PRIORITIES
 from desk.views import create_request
 
@@ -51,6 +58,38 @@ def notice(text, link=None):
 def member(project, email):
     return User.objects.filter(email=email, is_active=True, member_project__project=project,
                                member_project__is_active=True).first()
+
+
+@transaction.atomic
+def provision_member(project, profile):
+    """Only called with a full member profile fetched from the configured Slack workspace."""
+    email = profile.get('profile',{}).get('email','').strip().lower()
+    try:
+        validate_email(email)
+    except ValidationError:
+        return None
+    Project.objects.select_for_update().get(pk=project.pk)
+    actor = User.objects.filter(email=email).first()
+    if actor and (not actor.is_active or
+        ProjectMember.objects.filter(project=project, member=actor, is_active=False).exists() or
+        WorkspaceMember.objects.filter(workspace=project.workspace, member=actor, is_active=False).exists()):
+        return None  # Removing access must survive another Slack command.
+    if not actor:
+        name = (profile.get('profile',{}).get('real_name') or profile.get('real_name') or email.split('@')[0])[:100]
+        actor = User(email=email, username=str(uuid.uuid4()), first_name=name, display_name=name)
+        actor.set_unusable_password()
+        actor.save()
+    WorkspaceMember.objects.get_or_create(workspace=project.workspace, member=actor, defaults={'role':5})
+    ProjectMember.objects.get_or_create(project=project, member=actor, defaults={'role':5})
+    return actor
+
+
+def login_link(request, project, actor, issue=None):
+    token = secrets.token_urlsafe(32)
+    SlackLogin.objects.filter(expires_at__lte=timezone.now()).delete()
+    SlackLogin.objects.create(token_hash=hashlib.sha256(token.encode()).hexdigest(), user=actor,
+        project=project, issue=issue, expires_at=timezone.now() + timedelta(minutes=15))
+    return request.build_absolute_uri(reverse('slack_login', args=[token]))
 
 
 def request_modal(project, actor, slack_user, text=''):
@@ -133,20 +172,21 @@ def interactions(request):
             if not form.is_valid():
                 return JsonResponse({'response_action':'errors', 'errors':{key:str(errors[0]) for key,errors in form.errors.items()}})
             issue = create_request(project,actor,form.cleaned_data)
-            link = request.build_absolute_uri(f'/requests/{issue.pk}/')
+            link = login_link(request,project,actor,issue)
             return JsonResponse({'response_action':'update', 'view':notice(f'REV-{issue.sequence_id} submitted. You can follow its progress and add updates in RevOps Desk.',link)})
         if not (payload.get('command') == '/revops' or
                 payload.get('type') in ('shortcut','message_action') and payload.get('callback_id') in ('revops_create','revops_message')):
             return HttpResponse(status=400)
         profile = slack_api('users.info', user=slack_user)['user']
-        email = profile.get('profile',{}).get('email','').strip().lower()
-        actor = member(project,email) if profile.get('id') == slack_user and profile.get('team_id') == settings.SLACK_TEAM_ID and not any(
+        actor = provision_member(project,profile) if profile.get('id') == slack_user and profile.get('team_id') == settings.SLACK_TEAM_ID and not any(
             profile.get(flag) for flag in ('deleted','is_bot','is_app_user','is_restricted','is_ultra_restricted','is_stranger')) else None
         if actor:
             text = payload.get('message',{}).get('text','') if payload.get('type') == 'message_action' else payload.get('text','')
             modal = request_modal(project,actor,slack_user,text)
+            modal['blocks'].append({'type':'actions', 'elements':[{'type':'button', 'action_id':'open_desk',
+                'text':plain('My requests'), 'url':login_link(request,project,actor)}]})
         else:
-            modal = notice('Ask your RevOps manager to invite your Slack work email to RevOps Desk first. Guest and external Slack accounts cannot submit requests.')
+            modal = notice('Use your active RealAdvisor Slack member account to submit a request. If your Desk access was removed, contact your RevOps manager. Guest and external accounts cannot access the shared desk.')
         slack_api('views.open', trigger_id=payload['trigger_id'], view=modal)
         return HttpResponse()
     except (signing.BadSignature, PermissionDenied):

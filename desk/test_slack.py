@@ -2,12 +2,15 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import timedelta
 from urllib.parse import urlencode
 from unittest.mock import patch
 
 from django.test import Client, TestCase, SimpleTestCase, override_settings
 from django.core.management import call_command
-from plane.db.models import Project, Issue, Label, ProjectMember
+from django.utils import timezone
+from plane.db.models import Project, Issue, Label, ProjectMember, User, WorkspaceMember
+from desk.models import SlackLogin, Invitation
 
 
 @override_settings(SECURE_SSL_REDIRECT=False, SLACK_SIGNING_SECRET='test-secret', SLACK_BOT_TOKEN='test-token', SLACK_TEAM_ID='TTEST', SLACK_APP_ID='ATEST')
@@ -29,22 +32,24 @@ class SlackTests(TestCase):
         return {'type':'shortcut', 'callback_id':'revops_create', 'team':{'id':'TTEST'},
                 'api_app_id':'ATEST', 'user':{'id':'UTEST'}, 'trigger_id':'test-trigger', **extra}
 
-    def test_signatures_workspace_and_unknown_users_fail_closed(self):
+    def test_signatures_workspace_and_guests_fail_closed(self):
         with patch('desk.slack.slack_api') as api:
             self.assertEqual(self.post(self.start(), signature='v0=bad').status_code, 403)
             self.assertEqual(self.post(self.start(), age=301).status_code, 403)
             self.assertEqual(self.post(self.start(team={'id':'OTHER'})).status_code, 403)
             self.assertEqual(self.post(self.start(api_app_id='OTHER')).status_code, 403)
             api.assert_not_called()
-        with patch('desk.slack.slack_api', return_value={'user':{'id':'UTEST','team_id':'TTEST','profile':{'email':'outsider@realadvisor.com'}}}) as api:
-            self.post(self.start())
-            self.assertNotIn('submit', api.call_args.kwargs['view'])
+        for flag in ('deleted','is_bot','is_app_user','is_restricted','is_ultra_restricted','is_stranger'):
+            with patch('desk.slack.slack_api', return_value={'user':{'id':'UTEST','team_id':'TTEST',flag:True,'profile':{'email':'outsider@realadvisor.com'}}}) as api:
+                self.post(self.start())
+                self.assertNotIn('submit', api.call_args.kwargs['view'])
+        self.assertFalse(User.objects.filter(email='outsider@realadvisor.com').exists())
         self.assertEqual(Issue.objects.count(),0)
 
-    def open_form(self):
+    def open_form(self, email='owner@realadvisor.com'):
         def api(method, **kwargs):
             if method == 'users.info':
-                return {'user':{'id':'UTEST','team_id':'TTEST','profile':{'email':'owner@realadvisor.com'}}}
+                return {'user':{'id':'UTEST','team_id':'TTEST','profile':{'email':email,'real_name':'Slack Person'}}}
             self.modal = kwargs['view']
             return {'ok':True}
         with patch('desk.slack.slack_api', side_effect=api):
@@ -74,7 +79,7 @@ class SlackTests(TestCase):
         self.assertIn('&lt;script&gt;',ticket.description_html)
         self.assertEqual(str(ticket.request_details.requested_deadline),'2030-01-01')
         self.assertIsNone(ticket.target_date)
-        self.assertIn(str(ticket.pk), json.dumps(response.json()))
+        self.assertIn('/slack/access/', json.dumps(response.json()))
         self.post(body)
         self.assertEqual(Issue.objects.count(),1)
         # Identity and access are checked again at submission.
@@ -83,6 +88,49 @@ class SlackTests(TestCase):
         body['user']['id']='UTEST'
         ProjectMember.objects.filter(project=self.project,member=ticket.created_by).update(is_active=False)
         self.assertEqual(self.post(body).status_code,403)
+
+    def test_first_slack_use_needs_no_invitation_and_preserves_access_controls(self):
+        modal = self.open_form('new.person@realadvisor.com')
+        actor = User.objects.get(email='new.person@realadvisor.com')
+        self.assertFalse(actor.has_usable_password())
+        self.assertEqual(ProjectMember.objects.get(project=self.project,member=actor).role,5)
+        self.assertEqual(WorkspaceMember.objects.get(workspace=self.project.workspace,member=actor).role,5)
+        self.assertFalse(Invitation.objects.exists())
+        self.assertEqual(self.post(self.submission(modal)).json()['response_action'],'update')
+        self.assertEqual(Issue.objects.get().created_by,actor)
+        self.open_form('new.person@realadvisor.com')
+        self.assertEqual(User.objects.filter(email=actor.email).count(),1)
+        ProjectMember.objects.filter(project=self.project,member=actor).update(is_active=False)
+        self.assertNotIn('submit',self.open_form(actor.email))
+        self.assertFalse(ProjectMember.objects.get(project=self.project,member=actor).is_active)
+        self.open_form()
+        self.assertEqual(ProjectMember.objects.get(project=self.project,member=self.project.project_lead).role,20)
+        actor.is_active=False
+        actor.save()
+        self.assertNotIn('submit',self.open_form(actor.email))
+
+    def test_passwordless_ticket_access_is_csrf_protected_one_use_and_expires(self):
+        response = self.post(self.submission(self.open_form('new.person@realadvisor.com'))).json()
+        url = response['view']['blocks'][-1]['elements'][0]['url']
+        browser = Client(enforce_csrf_checks=True)
+        self.assertEqual(browser.get(url).status_code,200)
+        self.assertEqual(browser.get(url).status_code,200)  # Scanners cannot consume it.
+        self.assertNotIn('_auth_user_id',browser.session)
+        self.assertEqual(browser.post(url).status_code,403)
+        response = browser.post(url,HTTP_X_CSRFTOKEN=browser.cookies['csrftoken'].value)
+        self.assertEqual(response.status_code,302)
+        self.assertEqual(response.url,f'/requests/{Issue.objects.get().pk}/')
+        self.assertEqual(browser.get(response.url).status_code,200)
+        self.assertEqual(browser.get('/team/').status_code,403)
+        self.assertEqual(Client().post(url).status_code,410)
+        modal=self.open_form()
+        desk_url=modal['blocks'][-1]['elements'][0]['url']
+        SlackLogin.objects.update(expires_at=timezone.now()-timedelta(seconds=1))
+        self.assertEqual(Client().post(desk_url).status_code,410)
+        modal=self.open_form()
+        desk_url=modal['blocks'][-1]['elements'][0]['url']
+        ProjectMember.objects.filter(project=self.project,member=self.project.project_lead).update(is_active=False)
+        self.assertEqual(Client().post(desk_url).status_code,410)
 
     def test_field_errors_preserve_modal_without_creating_ticket(self):
         body=self.submission(self.open_form())

@@ -47,3 +47,11 @@ class LoginAttempt(models.Model):
     key = models.CharField(max_length=64, primary_key=True)
     count = models.PositiveIntegerField(default=0)
     since = models.DateTimeField()
+
+
+class SlackLogin(models.Model):
+    token_hash = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    project = models.ForeignKey("db.Project", on_delete=models.CASCADE)
+    issue = models.ForeignKey("db.Issue", null=True, on_delete=models.CASCADE)
+    expires_at = models.DateTimeField()

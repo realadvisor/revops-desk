@@ -7,6 +7,7 @@ from functools import wraps
 from pathlib import PurePath
 
 from django.contrib import messages
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -19,12 +20,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import escape
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_http_methods
 
 from plane.db.models import (User, Project, ProjectMember, WorkspaceMember, Label, Issue, IssueLabel,
     IssueAssignee, IssueActivity, IssueComment, State)
-from desk.models import RequestDetails, Attachment, Invitation, ReadReceipt, LoginAttempt
-from desk.forms import RequestForm, ManagementForm, CommentForm, AttachmentForm, InviteForm, ActivateForm
+from desk.models import RequestDetails, Attachment, Invitation, ReadReceipt, LoginAttempt, SlackLogin
+from desk.forms import RequestForm, ManagementForm, CommentForm, AttachmentForm, ActivateForm
 
 
 def membership(request):
@@ -50,7 +51,8 @@ def team_required(view=None, *, manager=False):
 
 def navigation(request):
     member = membership(request)
-    return {"is_manager": bool(member and member.role == 20), "desk_member": member}
+    return {"is_manager": bool(member and member.role == 20), "desk_member": member,
+        "slack_url": "https://app.slack.com/client/" + settings.SLACK_TEAM_ID if settings.SLACK_TEAM_ID else None}
 
 
 def history(issue, actor, text, field=None, old=None, new=None):
@@ -276,21 +278,11 @@ def make_invitation(project, creator, email, name, role):
     return token
 
 
+@require_http_methods(["GET"])
 @team_required(manager=True)
 def team(request):
-    form = InviteForm(request.POST or None)
-    invitation_url = None
-    if request.method == "POST" and form.is_valid():
-        data = form.cleaned_data
-        if data["email"] == request.user.email and data["role"] != 20:
-            form.add_error("role", "You cannot remove your own manager access.")
-        else:
-            token = make_invitation(request.project, request.user, **data)
-            invitation_url = request.build_absolute_uri(reverse("join", args=[token]))
-            form = InviteForm()
-    return render(request, "desk/team.html", {"form": form, "invitation_url": invitation_url,
-        "members": ProjectMember.objects.filter(project=request.project).select_related("member").order_by("-role", "member__first_name"),
-        "invitations": Invitation.objects.filter(project=request.project, used_at__isnull=True, expires_at__gt=timezone.now()).order_by("-created_at")}, status=400 if form.errors else 200)
+    return render(request, "desk/team.html", {
+        "members": ProjectMember.objects.filter(project=request.project).select_related("member").order_by("-role", "member__first_name")})
 
 
 @require_POST
@@ -306,7 +298,7 @@ def revoke_member(request, pk):
         member.is_active = False
         member.save()
         Invitation.objects.filter(project=request.project, email=member.member.email, used_at__isnull=True).update(used_at=timezone.now())
-    messages.success(request, "Access removed. A new invitation is needed to rejoin.")
+    messages.success(request, "Access removed. Slack will not automatically restore this account.")
     return redirect("team")
 
 
@@ -353,6 +345,26 @@ def join(request, token):
             messages.success(request, "You're in. Welcome to RevOps Desk.")
             return redirect("queue")
     return render(request, "desk/auth.html", {"activation": True, "form": form, "invite": invite}, status=400 if form.errors else 200)
+
+
+@require_http_methods(["GET", "POST"])
+def slack_sign_in(request, token):
+    hashed = hashlib.sha256(token.encode()).hexdigest()
+    with transaction.atomic():
+        project_id = SlackLogin.objects.filter(token_hash=hashed).values_list("project_id", flat=True).first()
+        if project_id:
+            Project.objects.select_for_update().get(pk=project_id)
+        access = SlackLogin.objects.select_for_update(of=("self",)).select_related("user").filter(token_hash=hashed).first()
+        if (not access or access.expires_at <= timezone.now() or not access.user.is_active or
+            not ProjectMember.objects.filter(project_id=access.project_id, member=access.user, is_active=True).exists()):
+            return render(request, "desk/auth.html", {"slack_expired": True}, status=410)
+        # GET is safe for Slack link previews/scanners. Only the CSRF-protected button consumes access.
+        if request.method == "POST":
+            login(request, access.user)
+            destination = reverse("detail", args=[access.issue_id]) if access.issue_id else "/?view=mine"
+            access.delete()
+            return redirect(destination)
+    return render(request, "desk/auth.html", {"slack_access": access})
 
 
 def sign_in(request):
