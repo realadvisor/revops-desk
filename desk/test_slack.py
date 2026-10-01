@@ -200,9 +200,11 @@ class SlackTests(TestCase):
             captured.append(kwargs['view'])
             return {'ok':True}
         with patch('desk.slack.slack_api',side_effect=api):
-            command={'command':'/revops','api_app_id':'ATEST','team_id':'TTEST','user_id':'UTEST','text':'Dashboard filter','trigger_id':'trigger'}
+            command={'command':'/askops','api_app_id':'ATEST','team_id':'TTEST','user_id':'UTEST','text':'Dashboard filter','trigger_id':'trigger'}
             self.assertEqual(self.post(command).status_code,200)
             self.assertEqual(captured[-1]['blocks'][1]['element']['initial_value'],'Dashboard filter')
+            self.assertEqual(self.post({**command,'command':'/revops'}).status_code,200)
+            self.assertEqual(self.post({**command,'command':'/other'}).status_code,400)
             self.assertEqual(self.post(self.start(type='message_action',callback_id='revops_message',message={'text':'Please fix this invoice.\nHere is the context.'})).status_code,200)
             self.assertEqual(captured[-1]['blocks'][2]['element']['initial_value'],'Please fix this invoice.\nHere is the context.')
         self.assertEqual(Issue.objects.count(),0)

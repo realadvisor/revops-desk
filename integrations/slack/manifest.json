@@ -16,8 +16,8 @@
     },
     "slash_commands": [
       {
-        "command": "/revops",
-        "description": "Submit a RevOps request",
+        "command": "/askops",
+        "description": "Ask ops for an automation, a dashboard fix or a CRM change",
         "usage_hint": "[short description]",
         "url": "https://revops-desk.vercel.app/slack/interactions/",
         "should_escape": false
@@ -25,13 +25,13 @@
     ],
     "shortcuts": [
       {
-        "name": "Create RevOps ticket",
+        "name": "Create Ask Ops ticket",
         "type": "global",
         "callback_id": "revops_create",
         "description": "Submit a request to the RevOps team"
       },
       {
-        "name": "Create RevOps ticket",
+        "name": "Create Ask Ops ticket",
         "type": "message",
         "callback_id": "revops_message",
         "description": "Turn this message into a RevOps request"

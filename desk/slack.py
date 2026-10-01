@@ -244,7 +244,7 @@ def interactions(request):
             issue = create_request(project,actor,form.cleaned_data)
             link = login_link(request,project,actor,issue)
             return JsonResponse({'response_action':'update', 'view':notice(f'REV-{issue.sequence_id} submitted. You can follow its progress and add updates in Ask Ops.',link)})
-        if not (payload.get('command') == '/revops' or
+        if not (payload.get('command') in ('/askops','/revops') or  # /revops: until the Slack app is updated.
                 payload.get('type') in ('shortcut','message_action') and payload.get('callback_id') in ('revops_create','revops_message')):
             return HttpResponse(status=400)
         profile = slack_api('users.info', user=slack_user)['user']
@@ -265,4 +265,4 @@ def interactions(request):
         return HttpResponse('Invalid Slack request.',status=400)
     except (URLError,TimeoutError) as error:
         logging.getLogger(__name__).warning("Slack intake API failure: %s", error)
-        return JsonResponse({'response_type':'ephemeral', 'text':'Slack could not open the form. Please try /revops again, or use Ask Ops in your browser.'},status=503)
+        return JsonResponse({'response_type':'ephemeral', 'text':'Slack could not open the form. Please try /askops again, or use Ask Ops in your browser.'},status=503)
