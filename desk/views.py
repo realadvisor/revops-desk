@@ -357,7 +357,7 @@ def join(request, token):
             invite.used_at = timezone.now()
             invite.save(update_fields=["used_at"])
             login(request, user)
-            messages.success(request, "You're in. Welcome to RealAdvisor Ops Desk.")
+            messages.success(request, "You're in. Welcome to Ask Ops.")
             return redirect("queue")
     return render(request, "desk/auth.html", {"activation": True, "form": form, "invite": invite}, status=400 if form.errors else 200)
 

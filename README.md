@@ -1,6 +1,6 @@
-# RealAdvisor Ops Desk
+# Ask Ops
 
-A lightweight request desk for everyone in RealAdvisor Slack built on [Plane](https://github.com/makeplane/plane).
+RealAdvisor's internal ops help desk (automations, dashboard fixes, CRM and billing changes): a lightweight request desk for everyone in RealAdvisor Slack built on [Plane](https://github.com/makeplane/plane).
 
 **Live:** https://revops-desk.vercel.app · **Source:** https://github.com/realadvisor/revops-desk
 

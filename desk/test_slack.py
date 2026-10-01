@@ -16,7 +16,8 @@ from plane.db.models import Project, Issue, Label, ProjectMember, User, Workspac
 from desk.models import SlackLogin, Invitation, Attachment
 
 
-@override_settings(SECURE_SSL_REDIRECT=False, SLACK_SIGNING_SECRET='test-secret', SLACK_BOT_TOKEN='test-token', SLACK_TEAM_ID='TTEST', SLACK_APP_ID='ATEST')
+@override_settings(SECURE_SSL_REDIRECT=False, SLACK_SIGNING_SECRET='test-secret', SLACK_BOT_TOKEN='test-token', SLACK_TEAM_ID='TTEST', SLACK_APP_ID='ATEST',
+    STORAGES={'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'}, 'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}})
 class SlackTests(TestCase):
     @classmethod
     def setUpTestData(cls):

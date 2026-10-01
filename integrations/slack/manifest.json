@@ -1,7 +1,7 @@
 {
   "display_information": {
-    "name": "RealAdvisor Ops Desk",
-    "description": "Submit a request to RevOps and follow its progress.",
+    "name": "Ask Ops",
+    "description": "Ask ops for an automation, a dashboard fix or a CRM change, and follow its progress.",
     "background_color": "#5056ce"
   },
   "features": {
@@ -11,7 +11,7 @@
       "messages_tab_read_only_enabled": true
     },
     "bot_user": {
-      "display_name": "RealAdvisor Ops Desk",
+      "display_name": "Ask Ops",
       "always_online": false
     },
     "slash_commands": [
