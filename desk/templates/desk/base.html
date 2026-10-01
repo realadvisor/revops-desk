@@ -7,8 +7,9 @@
   <a class="button primary new-button" href="{% url 'new' %}"><span aria-hidden="true">＋</span> New request <kbd>N</kbd></a>
   <nav aria-label="Main navigation">
     <span class="nav-label">Workspace</span>
-    <a class="nav-item {% if selected == 'all' %}current{% endif %}" href="/"><span aria-hidden="true">▤</span> All requests {% if counts %}<span class="count">{{ counts.all }}</span>{% endif %}</a>
+    {% if is_manager %}<a class="nav-item {% if selected == 'all' %}current{% endif %}" href="/"><span aria-hidden="true">▤</span> All requests {% if counts %}<span class="count">{{ counts.all }}</span>{% endif %}</a>
     <a class="nav-item {% if selected == 'mine' %}current{% endif %}" href="/?view=mine"><span aria-hidden="true">◎</span> My requests {% if counts %}<span class="count">{{ counts.mine }}</span>{% endif %}</a>
+    {% else %}<a class="nav-item {% if selected == 'all' or selected == 'mine' %}current{% endif %}" href="/"><span aria-hidden="true">◎</span> My requests {% if counts %}<span class="count">{{ counts.all }}</span>{% endif %}</a>{% endif %}
     <a class="nav-item {% if selected == 'done' %}current{% endif %}" href="/?view=done"><span aria-hidden="true">✓</span> Completed</a>
     {% if is_manager %}<span class="nav-label">Your queue</span>
     <a class="nav-item {% if selected == 'new' %}current{% endif %}" href="/?view=new"><span aria-hidden="true">▱</span> New requests {% if counts %}<span class="count">{{ counts.new }}</span>{% endif %}</a>

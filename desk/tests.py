@@ -127,6 +127,32 @@ class DeskTests(TestCase):
         self.assertContains(page, f'href="/files/{text.pk}/?inline"')
         self.assertEqual(Client().get(f"/files/{image.pk}/?inline").status_code, 302)
 
+    def test_requesters_only_see_and_touch_their_own_requests(self):
+        ticket = self.create_ticket()
+        url = f"/requests/{ticket.pk}/"
+        self.client.post(url + "attachment/", {"attachment": SimpleUploadedFile("note.txt", b"Private note")})
+        file = Attachment.objects.get(issue=ticket)
+        other = User.objects.create(username="other", email="other@example.com", first_name="Sam")
+        WorkspaceMember.objects.create(workspace=self.project.workspace, member=other, role=5)
+        ProjectMember.objects.create(project=self.project, member=other, role=5)
+        self.client.force_login(other)
+        self.assertNotContains(self.client.get("/"), ticket.name)
+        self.assertNotContains(self.client.get("/?q=useful"), ticket.name)
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.client.post(url + "comment/", {"comment": "Not mine"}).status_code, 404)
+        self.assertEqual(self.client.post(url + "attachment/", {"attachment": SimpleUploadedFile("x.txt", b"x")}).status_code, 404)
+        self.assertEqual(self.client.get(f"/files/{file.pk}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/files/{file.pk}/?inline").status_code, 404)
+        self.assertEqual(ticket.issue_comments.count(), 0)
+        self.assertEqual(Attachment.objects.filter(issue=ticket).count(), 1)
+        self.client.force_login(self.person)
+        self.assertContains(self.client.get("/"), ticket.name)
+        self.assertEqual(self.client.post(url + "comment/", {"comment": "Mine"}).status_code, 302)
+        self.client.force_login(self.manager)
+        self.assertContains(self.client.get("/"), ticket.name)
+        self.assertEqual(self.client.get(url).status_code, 200)
+        self.assertEqual(self.client.get(f"/files/{file.pk}/").status_code, 200)
+
     def test_invalid_inputs_and_duplicate_submission(self):
         data = self.payload()
         invalid = {**data, "requested_deadline": "not-a-date"}

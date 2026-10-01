@@ -4,7 +4,7 @@ RealAdvisor's internal ops help desk (automations, dashboard fixes, CRM and bill
 
 **Live:** https://revops-desk.vercel.app · **Source:** https://github.com/realadvisor/revops-desk
 
-Stakeholders submit a topic, country, urgency and optional requested deadline, then follow status and discussion. Managers triage one shared queue, assign an owner, set a delivery date and manage access. List and board views include search, filters and unread indicators. All desk members can read all requests; do not put restricted HR or personal records in the shared queue.
+Stakeholders submit a topic, country, urgency and optional requested deadline, then follow status and discussion. Managers triage one shared queue, assign an owner, set a delivery date and manage access. List and board views include search, filters and unread indicators. Requesters see only their own requests and can comment and attach files on those; managers see every request.
 
 ## Owner and team access
 
@@ -14,7 +14,7 @@ Existing manager roles are preserved. Guests, external/deactivated Slack users a
 
 ## Submit from Slack
 
-The Slack integration supports `/askops` and **Create Ask Ops ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. The Slack form accepts up to three attachments (PNG, JPG, PDF, CSV or TXT; 3 MB each), saved privately on the ticket. This requires approving the dedicated app's additional `files:read` scope before deploying the attachment-enabled form. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. The dedicated app is installed in RealAdvisor Slack and configured for production.
+The simplest way in is the app's Home tab: click **Ask Ops** in the Slack sidebar and press **New request**; your open requests are listed underneath. The Slack integration also supports `/askops` and **Create Ask Ops ticket** from a message menu or Slack's shortcuts. It uses the same request form validation and shared queue, with a private confirmation and ticket link. The Slack form accepts up to three attachments (PNG, JPG, PDF, CSV or TXT; 3 MB each), saved privately on the ticket. This requires approving the dedicated app's additional `files:read` scope before deploying the attachment-enabled form. See [Slack setup](integrations/slack/README.md) for the app manifest, required permissions and deployment configuration. The dedicated app is installed in RealAdvisor Slack and configured for production.
 
 Requesters get a private Slack message from the app when their ticket's status or delivery date changes or someone else comments on it. Image attachments are previewed on the request page; PDF, CSV and TXT files open in a browser tab.
 

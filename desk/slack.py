@@ -25,7 +25,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from plane.db.models import Project, ProjectMember, WorkspaceMember, User
+from plane.db.models import Issue, Project, ProjectMember, WorkspaceMember, User
 from desk.models import SlackLogin, RequestDetails
 from desk.forms import RequestForm, AttachmentForm, PRIORITIES, ATTACHMENT_EXTENSIONS, ATTACHMENT_MAX_BYTES
 from desk.views import create_request
@@ -86,13 +86,15 @@ def slack_api(method, **payload):
     return data
 
 
+def safe(value):  # Slack control characters: no injected links or mentions.
+    return str(value).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+
+
 def notify(issue, actor, text, link):
     """Private DM to the requester about their own ticket; never blocks or fails the save."""
     requester = issue.created_by
     if not settings.SLACK_BOT_TOKEN or not requester or requester.pk == actor.pk:
         return
-    def safe(value):  # Slack control characters: no injected links or mentions.
-        return str(value).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
     try:
         # ponytail: two synchronous Slack calls (2 s timeout each) per update; use a queue if saves feel slow.
         user = slack_api('users.lookupByEmail', email=requester.email)['user']['id']
@@ -154,7 +156,7 @@ def login_link(request, project, actor, issue=None):
 
 def request_modal(project, actor, slack_user, text=''):
     form = RequestForm(project=project)
-    blocks = [{'type':'section', 'text':plain('Your request and the text you submit will be visible to everyone in Ask Ops.')}]
+    blocks = [{'type':'section', 'text':plain('Only you and the ops team can see your request.')}]
     for name, label, multiline, limit in [('title','What do you need?',False,200), ('description','A little context',True,3000)]:
         element = {'type':'plain_text_input', 'action_id':'input', 'multiline':multiline, 'max_length':limit}
         initial = text[:limit] if multiline else (text.splitlines()[0][:limit] if text else '')
@@ -182,6 +184,39 @@ def request_modal(project, actor, slack_user, text=''):
             'close':plain('Cancel'), 'private_metadata':metadata, 'blocks':blocks}
 
 
+def slack_member(project, slack_user):
+    """The desk account of a full member of the configured workspace (created on first use), else None."""
+    profile = slack_api('users.info', user=slack_user)['user']
+    if profile.get('id') != slack_user or profile.get('team_id') != settings.SLACK_TEAM_ID or any(
+            profile.get(flag) for flag in ('deleted','is_bot','is_app_user','is_restricted','is_ultra_restricted','is_stranger')):
+        return None
+    return provision_member(project,profile)
+
+
+NO_ACCESS = 'Use your active RealAdvisor Slack member account to submit a request. If your access was removed, contact your RevOps manager. Guest and external accounts cannot use Ask Ops.'
+
+
+def publish_home(request, project, actor, slack_user):
+    """The app's Home tab: one button to ask, and the viewer's own open requests."""
+    if not actor:
+        blocks = [{'type':'section', 'text':plain(NO_ACCESS)}]
+    else:
+        blocks = [{'type':'header', 'text':plain('Need something from ops?')},
+            {'type':'section', 'text':plain('An automation, a dashboard fix, a CRM or billing change: tell us what you need and follow it here.')},
+            {'type':'actions', 'elements':[{'type':'button', 'style':'primary', 'action_id':'new_request', 'text':plain('New request')}]},
+            {'type':'divider'}, {'type':'header', 'text':plain('Your open requests')}]
+        issues = list(Issue.objects.filter(project=project, request_details__isnull=False, created_by=actor)
+            .exclude(state__group__in=['completed','cancelled']).select_related('state').order_by('-created_at')[:10])
+        for issue in issues:
+            delivery = f' · delivery {issue.target_date:%d %b %Y}' if issue.target_date else ''
+            blocks.append({'type':'section', 'text':{'type':'mrkdwn', 'text':f'*REV-{issue.sequence_id} · {safe(issue.name)}*\n{safe(issue.state.name)}{delivery}'}})
+        if not issues:
+            blocks.append({'type':'section', 'text':plain('Nothing open right now. Press New request to ask for something.')})
+        blocks.append({'type':'actions', 'elements':[{'type':'button', 'action_id':'open_desk',
+            'text':plain('Open my requests in the browser'), 'url':login_link(request,project,actor)}]})
+    slack_api('views.publish', user_id=slack_user, view={'type':'home', 'blocks':blocks})
+
+
 def verified_payload(request):
     if not all((settings.SLACK_SIGNING_SECRET, settings.SLACK_BOT_TOKEN, settings.SLACK_TEAM_ID, settings.SLACK_APP_ID)):
         return None
@@ -196,9 +231,14 @@ def verified_payload(request):
         b'v0:' + timestamp.encode() + b':' + request.body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, request.headers.get('X-Slack-Signature','')):
         raise PermissionDenied
-    payload = json.loads(request.POST['payload']) if 'payload' in request.POST else request.POST.dict()
+    if request.content_type == 'application/json':  # Events API
+        payload = json.loads(request.body)
+    else:
+        payload = json.loads(request.POST['payload']) if 'payload' in request.POST else request.POST.dict()
     if not isinstance(payload,dict):
         raise ValueError('Invalid payload')
+    if payload.get('type') == 'url_verification':
+        return payload  # Slack's signed endpoint check carries no workspace or app id.
     team = payload.get('team',{}).get('id') or payload.get('team_id')
     if team != settings.SLACK_TEAM_ID or payload.get('api_app_id') != settings.SLACK_APP_ID:
         raise PermissionDenied
@@ -212,9 +252,19 @@ def interactions(request):
         payload = verified_payload(request)
         if payload is None:
             return HttpResponse('Slack intake is not configured.', status=503)
-        if payload.get('type') == 'block_actions':
+        if payload.get('type') == 'url_verification':
+            return JsonResponse({'challenge':str(payload.get('challenge',''))[:200]})
+        home_button = payload.get('type') == 'block_actions' and any(
+            isinstance(action,dict) and action.get('action_id') == 'new_request' for action in payload.get('actions',[]))
+        if payload.get('type') == 'block_actions' and not home_button:
             return HttpResponse()  # URL button acknowledgement; no mutations.
         project = Project.objects.select_related('workspace','default_state').get(identifier='REV', workspace__slug='realadvisor')
+        if payload.get('type') == 'event_callback':
+            event = payload.get('event',{})
+            if event.get('type') == 'app_home_opened' and event.get('tab') == 'home':
+                # ponytail: profile lookup + publish on every open; cache the Slack id on the user if it gets slow.
+                publish_home(request,project,slack_member(project,event['user']),event['user'])
+            return HttpResponse()
         slack_user = payload.get('user',{}).get('id') or payload.get('user_id')
         if not slack_user:
             raise PermissionDenied
@@ -243,20 +293,22 @@ def interactions(request):
                     return JsonResponse({'response_action':'errors', 'errors':{'attachments':'Slack could not download an attachment in time. Please try submitting again. Your ticket has not been created.'}})
             issue = create_request(project,actor,form.cleaned_data)
             link = login_link(request,project,actor,issue)
-            return JsonResponse({'response_action':'update', 'view':notice(f'REV-{issue.sequence_id} submitted. You can follow its progress and add updates in Ask Ops.',link)})
-        if not (payload.get('command') in ('/askops','/revops') or  # /revops: until the Slack app is updated.
+            try:
+                publish_home(request,project,actor,slack_user)  # So the new request shows on their Home tab straight away.
+            except (URLError,TimeoutError,HTTPException) as error:
+                logging.getLogger(__name__).warning('Slack home refresh failure: %s', error)
+            return JsonResponse({'response_action':'update', 'view':notice(f'REV-{issue.sequence_id} submitted. You can follow it on the Ask Ops Home tab in Slack, or open it to add details.',link)})
+        if not (home_button or payload.get('command') == '/askops' or
                 payload.get('type') in ('shortcut','message_action') and payload.get('callback_id') in ('revops_create','revops_message')):
             return HttpResponse(status=400)
-        profile = slack_api('users.info', user=slack_user)['user']
-        actor = provision_member(project,profile) if profile.get('id') == slack_user and profile.get('team_id') == settings.SLACK_TEAM_ID and not any(
-            profile.get(flag) for flag in ('deleted','is_bot','is_app_user','is_restricted','is_ultra_restricted','is_stranger')) else None
+        actor = slack_member(project,slack_user)
         if actor:
             text = payload.get('message',{}).get('text','') if payload.get('type') == 'message_action' else payload.get('text','')
             modal = request_modal(project,actor,slack_user,text)
             modal['blocks'].append({'type':'actions', 'elements':[{'type':'button', 'action_id':'open_desk',
                 'text':plain('My requests'), 'url':login_link(request,project,actor)}]})
         else:
-            modal = notice('Use your active RealAdvisor Slack member account to submit a request. If your Desk access was removed, contact your RevOps manager. Guest and external accounts cannot access the shared desk.')
+            modal = notice(NO_ACCESS)
         slack_api('views.open', trigger_id=payload['trigger_id'], view=modal)
         return HttpResponse()
     except (signing.BadSignature, PermissionDenied):

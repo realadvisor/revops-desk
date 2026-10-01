@@ -6,7 +6,7 @@
   },
   "features": {
     "app_home": {
-      "home_tab_enabled": false,
+      "home_tab_enabled": true,
       "messages_tab_enabled": true,
       "messages_tab_read_only_enabled": true
     },
@@ -50,6 +50,12 @@
     }
   },
   "settings": {
+    "event_subscriptions": {
+      "request_url": "https://revops-desk.vercel.app/slack/interactions/",
+      "bot_events": [
+        "app_home_opened"
+      ]
+    },
     "interactivity": {
       "is_enabled": true,
       "request_url": "https://revops-desk.vercel.app/slack/interactions/"

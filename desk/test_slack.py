@@ -24,6 +24,57 @@ class SlackTests(TestCase):
         call_command('bootstrap_desk', email='owner@realadvisor.com', verbosity=0)
         cls.project = Project.objects.get(identifier='REV')
 
+    def setUp(self):
+        network = patch('desk.slack.urlopen', side_effect=URLError('no network in tests'))
+        network.start()
+        self.addCleanup(network.stop)
+
+    def event(self, body, signature=None):
+        raw = json.dumps(body).encode()
+        timestamp = str(int(time.time()))
+        digest = hmac.new(b'test-secret', b'v0:' + timestamp.encode() + b':' + raw, hashlib.sha256).hexdigest()
+        return Client(enforce_csrf_checks=True).post('/slack/interactions/', raw, content_type='application/json',
+            HTTP_X_SLACK_REQUEST_TIMESTAMP=timestamp, HTTP_X_SLACK_SIGNATURE=signature or 'v0=' + digest)
+
+    def test_home_tab_offers_a_new_request_button_and_only_the_viewers_requests(self):
+        self.assertEqual(self.event({'type':'url_verification','challenge':'abc'}).json(),{'challenge':'abc'})
+        self.assertEqual(self.event({'type':'url_verification','challenge':'abc'},signature='v0=bad').status_code,403)
+        calls=[]
+        def api(method, **kwargs):
+            calls.append((method,kwargs))
+            if method == 'users.info':
+                email='owner@realadvisor.com' if kwargs['user'] == 'UTEST' else 'new.person@realadvisor.com'
+                return {'user':{'id':kwargs['user'],'team_id':'TTEST','profile':{'email':email,'real_name':'Slack Person'}}}
+            return {'ok':True}
+        opened={'type':'event_callback','team_id':'TTEST','api_app_id':'ATEST','event':{'type':'app_home_opened','user':'UTEST','tab':'home'}}
+        with patch('desk.slack.slack_api',side_effect=api):
+            self.assertEqual(self.post(self.start()).status_code,200)
+            form=calls[-1][1]['view']
+            self.assertEqual(self.post(self.submission(form)).json()['response_action'],'update')
+            # Submitting refreshes the submitter's Home tab.
+            self.assertEqual((calls[-1][0],calls[-1][1]['user_id']),('views.publish','UTEST'))
+            self.assertIn('Slack request',json.dumps(calls[-1][1]['view']))
+            calls.clear()
+            self.assertEqual(self.event(opened).status_code,200)
+            method,published=calls[-1]
+            self.assertEqual((method,published['user_id'],published['view']['type']),('views.publish','UTEST','home'))
+            home=json.dumps(published['view'])
+            for expected in ('new_request','Slack request','/slack/access/'):
+                self.assertIn(expected,home)
+            self.assertEqual(self.event({**opened,'event':{**opened['event'],'user':'UOTHER'}}).status_code,200)
+            self.assertIn('new_request',json.dumps(calls[-1][1]['view']))
+            self.assertNotIn('Slack request',json.dumps(calls[-1][1]['view']))
+            self.assertEqual(self.event({**opened,'team_id':'OTHER'}).status_code,403)
+            calls.clear()
+            self.assertEqual(self.event({**opened,'event':{**opened['event'],'tab':'messages'}}).status_code,200)
+            self.assertEqual(calls,[])
+            # The Home button opens the same form; URL buttons are only acknowledged.
+            self.assertEqual(self.post(self.start(type='block_actions',actions=[{'action_id':'new_request'}])).status_code,200)
+            self.assertEqual((calls[-1][0],calls[-1][1]['view']['callback_id']),('views.open','revops_submit'))
+            calls.clear()
+            self.assertEqual(self.post(self.start(type='block_actions',actions=[{'action_id':'open_desk'}])).status_code,200)
+            self.assertEqual(calls,[])
+
     def post(self, payload, *, age=0, signature=None):
         body = urlencode({'payload': json.dumps(payload)}).encode()
         timestamp = str(int(time.time()) - age)
@@ -203,7 +254,6 @@ class SlackTests(TestCase):
             command={'command':'/askops','api_app_id':'ATEST','team_id':'TTEST','user_id':'UTEST','text':'Dashboard filter','trigger_id':'trigger'}
             self.assertEqual(self.post(command).status_code,200)
             self.assertEqual(captured[-1]['blocks'][1]['element']['initial_value'],'Dashboard filter')
-            self.assertEqual(self.post({**command,'command':'/revops'}).status_code,200)
             self.assertEqual(self.post({**command,'command':'/other'}).status_code,400)
             self.assertEqual(self.post(self.start(type='message_action',callback_id='revops_message',message={'text':'Please fix this invoice.\nHere is the context.'})).status_code,200)
             self.assertEqual(captured[-1]['blocks'][2]['element']['initial_value'],'Please fix this invoice.\nHere is the context.')

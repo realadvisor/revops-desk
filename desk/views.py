@@ -74,22 +74,28 @@ def mark_seen(issue, user):
     ReadReceipt.objects.update_or_create(issue=issue, user=user, defaults={"seen_at": issue.updated_at})
 
 
-def issue_queryset(project):
-    return (Issue.objects.filter(project=project, request_details__isnull=False)
+def visible_issues(request):
+    """Managers see every request; everyone else only their own."""
+    issues = Issue.objects.filter(project=request.project, request_details__isnull=False)
+    return issues if membership(request).role == 20 else issues.filter(created_by=request.user)
+
+
+def issue_queryset(request):
+    return (visible_issues(request)
         .select_related("state", "created_by", "request_details__topic", "request_details__country", "project")
         .prefetch_related("assignees").annotate(due=Coalesce("target_date", "request_details__requested_deadline")))
 
 
 @team_required
 def queue(request):
-    qs = issue_queryset(request.project)
+    qs = issue_queryset(request)
     open_qs = qs.exclude(state__group__in=["completed", "cancelled"])
     counts = {"all": open_qs.count(), "new": qs.filter(state__name="New").count(),
         "active": qs.filter(state__name="In progress").count(), "waiting": qs.filter(state__name="Waiting").count(),
         "overdue": open_qs.filter(due__lt=timezone.localdate()).count(),
         "mine": open_qs.filter(created_by=request.user).count()}
     selected = request.GET.get("view", "all")
-    titles = {"all": "All requests", "mine": "My requests", "new": "New requests", "active": "In progress", "waiting": "Waiting", "overdue": "Overdue", "done": "Completed"}
+    titles = {"all": "All requests" if membership(request).role == 20 else "My requests", "mine": "My requests", "new": "New requests", "active": "In progress", "waiting": "Waiting", "overdue": "Overdue", "done": "Completed"}
     if selected == "mine":
         qs = open_qs.filter(created_by=request.user)
     elif selected in {"new", "active", "waiting"}:
@@ -195,7 +201,7 @@ def detail_response(request, issue, *, management_form=None, comment_form=None, 
 
 @team_required
 def detail(request, pk):
-    issue = get_object_or_404(issue_queryset(request.project), pk=pk)
+    issue = get_object_or_404(issue_queryset(request), pk=pk)
     mark_seen(issue, request.user)
     return detail_response(request, issue)
 
@@ -204,7 +210,7 @@ def detail(request, pk):
 @team_required(manager=True)
 def manage_request(request, pk):
     with transaction.atomic():
-        issue = get_object_or_404(Issue.objects.select_for_update().filter(project=request.project, request_details__isnull=False), pk=pk)
+        issue = get_object_or_404(visible_issues(request).select_for_update(), pk=pk)
         form = ManagementForm(request.POST, project=request.project)
         if not form.is_valid():
             return detail_response(request, issue, management_form=form, status=400)
@@ -242,7 +248,7 @@ def manage_request(request, pk):
 @team_required
 def add_comment(request, pk):
     with transaction.atomic():
-        issue = get_object_or_404(Issue.objects.select_for_update().filter(project=request.project, request_details__isnull=False), pk=pk)
+        issue = get_object_or_404(visible_issues(request).select_for_update(), pk=pk)
         form = CommentForm(request.POST)
         if not form.is_valid():
             return detail_response(request, issue, comment_form=form, status=400)
@@ -257,7 +263,7 @@ def add_comment(request, pk):
 @team_required
 def add_attachment(request, pk):
     with transaction.atomic():
-        issue = get_object_or_404(Issue.objects.select_for_update().filter(project=request.project, request_details__isnull=False), pk=pk)
+        issue = get_object_or_404(visible_issues(request).select_for_update(), pk=pk)
         form = AttachmentForm(request.POST, request.FILES)
         if not form.is_valid() or not form.cleaned_data.get("attachment"):
             if not form.errors:
@@ -274,7 +280,7 @@ def add_attachment(request, pk):
 
 @team_required
 def download(request, pk):
-    file = get_object_or_404(Attachment, pk=pk, issue__project=request.project)
+    file = get_object_or_404(Attachment, pk=pk, issue__in=visible_issues(request))
     # Previews only ever get a fixed type chosen from the extension, with nosniff, so uploads cannot run as HTML.
     inline = file.inline_type if "inline" in request.GET else ""
     return FileResponse(io.BytesIO(bytes(file.data)), as_attachment=not inline, filename=file.name, content_type=inline or "application/octet-stream")
