@@ -5,7 +5,7 @@ import time
 from urllib.parse import urlencode
 from unittest.mock import patch
 
-from django.test import Client, TestCase, override_settings
+from django.test import Client, TestCase, SimpleTestCase, override_settings
 from django.core.management import call_command
 from plane.db.models import Project, Issue, Label, ProjectMember
 
@@ -108,3 +108,21 @@ class SlackTests(TestCase):
             self.assertEqual(self.post(self.start(type='message_action',callback_id='revops_message',message={'text':'Please fix this invoice.\nHere is the context.'})).status_code,200)
             self.assertEqual(captured[-1]['blocks'][2]['element']['initial_value'],'Please fix this invoice.\nHere is the context.')
         self.assertEqual(Issue.objects.count(),0)
+
+
+@override_settings(SLACK_BOT_TOKEN='test-token')
+class SlackTransportTests(SimpleTestCase):
+    def test_slack_methods_use_form_encoding_with_json_nested_views(self):
+        import io
+        from urllib.parse import parse_qs
+        from desk.slack import slack_api
+        captured=[]
+        def response(request, **kwargs):
+            captured.append(request)
+            return io.BytesIO(b'{"ok":true}')
+        with patch('desk.slack.urlopen',side_effect=response):
+            slack_api('users.info',user='UTEST')
+            slack_api('views.open',trigger_id='trigger',view={'type':'modal'})
+        self.assertEqual(captured[0].get_header('Content-type'),'application/x-www-form-urlencoded')
+        self.assertEqual(parse_qs(captured[0].data.decode()),{'user':['UTEST']})
+        self.assertEqual(json.loads(parse_qs(captured[1].data.decode())['view'][0]),{'type':'modal'})

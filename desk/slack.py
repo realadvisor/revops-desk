@@ -2,10 +2,12 @@
 import hashlib
 import hmac
 import json
+import logging
 import time
 import uuid
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core import signing
@@ -22,12 +24,14 @@ SALT = 'desk.slack.modal'
 
 
 def slack_api(method, **payload):
-    request = Request('https://slack.com/api/' + method, data=json.dumps(payload).encode(), headers={
-        'Authorization': 'Bearer ' + settings.SLACK_BOT_TOKEN, 'Content-Type': 'application/json; charset=utf-8'})
+    request = Request('https://slack.com/api/' + method, data=urlencode({
+        key:json.dumps(value) if isinstance(value,(dict,list)) else value for key,value in payload.items()
+    }).encode(), headers={
+        'Authorization': 'Bearer ' + settings.SLACK_BOT_TOKEN, 'Content-Type': 'application/x-www-form-urlencoded'})
     with urlopen(request, timeout=2) as response:
         data = json.load(response)
     if not data.get('ok'):
-        raise URLError('Slack API request failed')
+        raise URLError('Slack API ' + method + ': ' + str(data.get('error','unknown_error'))[:100])
     return data
 
 
@@ -149,5 +153,6 @@ def interactions(request):
         return HttpResponse('Not authorized.',status=403)
     except (ValueError,KeyError,TypeError,AttributeError):
         return HttpResponse('Invalid Slack request.',status=400)
-    except (URLError,TimeoutError):
+    except (URLError,TimeoutError) as error:
+        logging.getLogger(__name__).warning("Slack intake API failure: %s", error)
         return JsonResponse({'response_type':'ephemeral', 'text':'Slack could not open the form. Please try /revops again, or use RevOps Desk in your browser.'},status=503)
