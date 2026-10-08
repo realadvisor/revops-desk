@@ -8,3 +8,5 @@ python-dotenv==1.2.2
 whitenoise==6.12.0
 django-filter==25.2
 djangorestframework==3.17.2
+markdown-it-py==4.2.0
+linkify-it-py==2.2.0

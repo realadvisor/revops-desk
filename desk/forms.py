@@ -31,7 +31,7 @@ class AttachmentForm(forms.Form):
 
 class RequestForm(AttachmentForm):
     title = forms.CharField(max_length=200, label="What do you need?", widget=forms.TextInput(attrs={"placeholder": "e.g. Add a country filter to the sales dashboard", "autofocus": True}))
-    description = forms.CharField(min_length=10, max_length=20000, label="A little context", widget=forms.Textarea(attrs={"rows": 6, "placeholder": "What is happening, what should happen, and who is affected? Paste any useful links here."}))
+    description = forms.CharField(min_length=10, max_length=20000, label="A little context", help_text="Markdown supported: **bold**, *italic*, # heading, - list, [link](https://…), and ```code blocks```.", widget=forms.Textarea(attrs={"rows": 6, "placeholder": "What is happening, what should happen, and who is affected? Paste any useful links here."}))
     topic = NameChoice(queryset=Label.objects.none(), empty_label="Choose a topic")
     country = NameChoice(queryset=Label.objects.none(), empty_label="Choose a country")
     priority = forms.ChoiceField(choices=PRIORITIES, initial="medium", label="How urgent is it?")
@@ -66,7 +66,7 @@ class ManagementForm(forms.Form):
 
 
 class CommentForm(forms.Form):
-    comment = forms.CharField(max_length=10000, widget=forms.Textarea(attrs={"rows": 3, "placeholder": "Add an update or answer a question…"}), label="Add an update")
+    comment = forms.CharField(max_length=10000, widget=forms.Textarea(attrs={"rows": 3, "placeholder": "Add an update or answer a question…"}), label="Add an update", help_text="Markdown supported: **bold**, *italic*, # heading, - list, [link](https://…), and ```code blocks```.")
 
 
 class InviteForm(forms.Form):

@@ -49,6 +49,12 @@ print("http://127.0.0.1:4783/join/" + token + "/")
 
 Do not commit or publicly share activation links, credentials or database URLs.
 
+## Markdown
+
+Request descriptions and comments support headings, emphasis, lists, links, tables,
+quotes, and fenced code blocks. Existing text keeps its line breaks and clickable
+bare URLs. Raw HTML is displayed as text; attach screenshots with the file picker.
+
 ## Checks
 
 ```sh

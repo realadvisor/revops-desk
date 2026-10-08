@@ -72,6 +72,22 @@ class DeskTests(TestCase):
         self.assertEqual(anonymous.get(url).status_code, 302)
         self.assertGreaterEqual(ticket.issue_activity.count(), 4)
 
+    def test_markdown_survives_submission_and_comment_storage(self):
+        data = self.payload()
+        data["description"] = "## Request details\n\n**Revenue** & cash\n\n> Check <script>alert(1)</script>\n\n[Report](https://example.com/?a=1&b=2)"
+        response = self.client.post("/requests/new/", data)
+        self.assertEqual(response.status_code, 302)
+        ticket = Issue.objects.get(name=data["title"])
+        url = f"/requests/{ticket.pk}/"
+        self.assertEqual(self.client.post(url + "comment/", {"comment": "**Verified**\n\n```sql\nSELECT 1 < 2;\n```"}).status_code, 302)
+        response = self.client.get(url)
+        for expected in ("<h2>Request details</h2>", "<strong>Revenue</strong> &amp; cash",
+                         "<blockquote>", "&lt;script&gt;alert(1)&lt;/script&gt;",
+                         'href="https://example.com/?a=1&amp;b=2"', "<strong>Verified</strong>",
+                         '<pre><code class="language-sql">SELECT 1 &lt; 2;'):
+            self.assertContains(response, expected)
+        self.assertNotContains(response, "<script>alert(1)</script>")
+
     def test_requester_gets_private_slack_updates(self):
         ticket = self.create_ticket()
         url = f"/requests/{ticket.pk}/"
