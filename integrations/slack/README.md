@@ -1,5 +1,44 @@
 # Slack intake
 
+## Send a message to BB
+
+Open a message's **More actions** menu and select **Send to BB** under Ask Ops.
+The shortcut queues one agent in the BB RevOps project. The agent reads the
+selected message and its thread, investigates, applies supported fixes, and
+reports in that same Slack thread. A private modal confirms queue acceptance.
+Queue acceptance does not mean the agent finished. BB must be running with
+valid Google credentials. Accepted events wait in Pub/Sub for up to seven days.
+
+The initial release permits only Theo's Slack user ID. Other users receive a
+private access notice. The server verifies Slack's signature, workspace, app,
+and timestamp before checking this user ID. There are no added Slack scopes.
+The BB worker uses the connected Slack account to read the full thread.
+
+Production-only configuration:
+
+- `REVOPS_BB_SLACK_USER_ID`: Theo's verified Slack user ID.
+- `REVOPS_BB_WEBHOOK_TOKEN`: the token for BB source `slack-revops-message`.
+
+Create that source for project `proj_q2sxujq58a`, environment `env_5r6a8bat33`,
+with [bb-worker-prompt.txt](bb-worker-prompt.txt). Leave `targetThreadId` unset
+so each distinct message creates a new thread. Retrieve the source token with
+`bb webhooks credentials slack-revops-message --json` into a private file.
+Do not expose it in logs or commit it. Configure these variables only in
+production, deploy the handler, then add the message shortcut from the manifest.
+
+The idempotency key is workspace, channel, and selected-message timestamp.
+Repeated clicks or retries on one message do not create more agents. The event
+contains only stable identifiers, so editing the message does not change the
+event body. Selecting a reply preserves its original parent timestamp.
+If delivery is uncertain, use the same shortcut on the same message again.
+Inspect `bb webhooks deliveries` for the resulting BB thread.
+
+To disable new dispatches, remove the Slack shortcut or clear
+`REVOPS_BB_SLACK_USER_ID` and redeploy. Pausing the BB source holds already
+accepted events rather than discarding them.
+
+## Create a request
+
 Use `/askops [short description]`, the **Create Ask Ops ticket** global shortcut, or the same shortcut from a message's menu. The Slack modal collects topic, country, urgency and an optional requested date, and up to three attachments (PNG, JPG, PDF, CSV or TXT; 3 MB each). Submission creates the same Plane issue as the web form and returns a private confirmation with its link. Selected message text is prefilled for review; only the text the user submits is copied. A request is visible only to its requester and the managers.
 
 A dedicated **Ask Ops** Slack app uses `manifest.json`. It has no message-history scopes, channel notifications or automatic DM ingestion; its only event subscription is `app_home_opened`, which carries no message content. `commands` enables commands/shortcuts; `users:read` and `users:read.email` verify a full workspace member and automatically create requester access on first use. Guests, external users, deactivated users and revoked Desk memberships are rejected. `files:read` enables Slack's native upload field. Only files explicitly selected in that field are downloaded, validated and copied into the ticket's private attachment storage. Message-shortcut files are not silently copied; upload the desired files in the form.

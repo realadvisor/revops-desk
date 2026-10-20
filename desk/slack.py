@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import secrets
 import time
 import uuid
@@ -74,12 +75,12 @@ def slack_attachments(files, slack_user):
         return list(pool.map(read_slack_file,files))
 
 
-def slack_api(method, **payload):
+def slack_api(method, *, timeout=2, **payload):
     request = Request('https://slack.com/api/' + method, data=urlencode({
         key:json.dumps(value) if isinstance(value,(dict,list)) else value for key,value in payload.items()
     }).encode(), headers={
         'Authorization': 'Bearer ' + settings.SLACK_BOT_TOKEN, 'Content-Type': 'application/x-www-form-urlencoded'})
-    with urlopen(request, timeout=2) as response:
+    with urlopen(request, timeout=timeout) as response:
         data = json.load(response)
     if not data.get('ok'):
         raise URLError('Slack API ' + method + ': ' + str(data.get('error','unknown_error'))[:100])
@@ -246,6 +247,60 @@ def verified_payload(request):
     return payload
 
 
+def send_to_bb(payload):
+    """Dispatch an explicitly selected message after Slack signature verification."""
+    user = payload.get('user', {}).get('id')
+    if not settings.BB_SLACK_USER_ID or user != settings.BB_SLACK_USER_ID:
+        text = 'Send to BB is restricted to Theo. No work was started.'
+    elif not settings.BB_WEBHOOK_TOKEN:
+        text = 'Send to BB is not configured. No work was started.'
+    else:
+        channel = payload.get('channel', {}).get('id', '')
+        message = payload.get('message', {})
+        timestamp = payload.get('message_ts', '')
+        parent = message.get('thread_ts') or timestamp
+        if (not re.fullmatch(r'[CGD][A-Z0-9]+', channel)
+                or not re.fullmatch(r'\d{10,}\.\d{6}', timestamp)
+                or not re.fullmatch(r'\d{10,}\.\d{6}', parent)
+                or message.get('ts') != timestamp):
+            raise ValueError('Invalid selected message')
+        # Exclude mutable text and click IDs so retries and repeated clicks match.
+        event = {
+            'type': 'slack_message_shortcut', 'team_id': settings.SLACK_TEAM_ID,
+            'channel_id': channel, 'message_ts': timestamp, 'thread_ts': parent,
+            'requested_by': user,
+        }
+        request = Request(
+            'https://bb-webhook-triggers-hidgdg2rjq-ew.a.run.app/hooks/slack-revops-message',
+            data=json.dumps(event).encode(),
+            headers={
+                'Authorization': 'Bearer ' + settings.BB_WEBHOOK_TOKEN,
+                'Content-Type': 'application/json',
+                'Idempotency-Key': f'{settings.SLACK_TEAM_ID}:{channel}:{timestamp}',
+            },
+        )
+        try:
+            # The queue call plus the confirmation call fit the 3-second Slack window.
+            with urlopen(request, timeout=1.2) as response:
+                if response.status != 202 or json.load(response).get('accepted') is not True:
+                    raise URLError('Queue did not accept the message')
+            text = ('Queued for BB in RevOps. The agent will analyze this message, apply supported fixes, '
+                    'and report in the original Slack thread. Repeated clicks do not start another agent. '
+                    'If BB is offline, work starts when it reconnects.')
+        except (URLError, TimeoutError, HTTPException, ValueError, AttributeError):
+            text = ('Delivery to BB is not confirmed. Try Send to BB on the same message again. '
+                    'Retries do not start duplicate agents.')
+            logging.getLogger(__name__).warning('Send to BB queue acceptance was not confirmed')
+    try:
+        view = notice(text)
+        view['title'] = plain('Send to BB')
+        slack_api('views.open', trigger_id=payload['trigger_id'], view=view, timeout=1.2)
+    except (URLError, TimeoutError, HTTPException):
+        # A lost/expired confirmation must not reject work already accepted by the queue.
+        logging.getLogger(__name__).warning('Send to BB confirmation could not open')
+    return HttpResponse()
+
+
 @csrf_exempt  # Slack HMAC authenticates the exact body, workspace and app; browser sessions cannot authorize this route.
 @require_POST
 def interactions(request):
@@ -256,6 +311,8 @@ def interactions(request):
             return HttpResponse('Slack intake is not configured.', status=503)
         if payload.get('type') == 'url_verification':
             return JsonResponse({'challenge':str(payload.get('challenge',''))[:200]})
+        if payload.get('type') == 'message_action' and payload.get('callback_id') == 'revops_send_to_bb':
+            return send_to_bb(payload)
         home_button = payload.get('type') == 'block_actions' and any(
             isinstance(action,dict) and action.get('action_id') == 'new_request' for action in payload.get('actions',[]))
         if payload.get('type') == 'block_actions' and not home_button:

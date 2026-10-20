@@ -25,6 +25,12 @@
     ],
     "shortcuts": [
       {
+        "name": "Send to BB",
+        "type": "message",
+        "callback_id": "revops_send_to_bb",
+        "description": "Analyze this message, fix the issue and report in this Slack thread"
+      },
+      {
         "name": "Create Ask Ops ticket",
         "type": "global",
         "callback_id": "revops_create",
