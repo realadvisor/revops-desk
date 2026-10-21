@@ -40,26 +40,62 @@ class SendToBBTests(SimpleTestCase):
         response.status = 202
         return response
 
+    def submit(self, api, prompt=None, **changes):
+        view = api.call_args.kwargs['view']
+        return self.post(type='view_submission', view={
+            'id': 'VTEST', 'callback_id': 'revops_send_to_bb_submit',
+            'private_metadata': view['private_metadata'],
+            'state': {'values': {'additional_prompt': {'input': {'value': prompt}}}},
+        }, **changes)
+
     @patch('desk.slack.slack_api')
     @patch('desk.slack.urlopen')
-    def test_parent_and_reply_route_to_correct_thread_with_stable_retry_key(self, network, api):
-        network.side_effect = lambda *a, **kw: self.accepted()
+    def test_opening_or_cancelling_does_not_dispatch(self, network, api):
         self.assertEqual(self.post().status_code, 200)
+        network.assert_not_called()
+        view = api.call_args.kwargs['view']
+        field = next(block for block in view['blocks'] if block['type'] == 'input')
+        self.assertTrue(field['optional'])
+        self.assertTrue(field['element']['multiline'])
+        self.assertEqual(self.post(type='view_closed', view=view).status_code, 200)
+        network.assert_not_called()
+
+    @patch('desk.slack.slack_api')
+    @patch('desk.slack.urlopen')
+    def test_prompt_and_reply_context_reach_bb_with_stable_retry_key(self, network, api):
+        network.side_effect = lambda *a, **kw: self.accepted()
+        self.post(message={'ts': '1792500001.000002', 'thread_ts': '1792500000.000001'})
+        result = self.submit(api, 'Analyze only.\nDo not change records.')
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['response_action'], 'update')
+        self.assertIn('Queued', json.dumps(result.json()['view']))
         request = network.call_args.args[0]
-        self.assertEqual(request.get_header('Idempotency-key'), 'TTEST:C123:1792500001.000002')
+        self.assertTrue(request.get_header('Idempotency-key').startswith('TTEST:C123:1792500001.000002:'))
         self.assertEqual(request.get_header('Authorization'), 'Bearer bb-test-token')
         self.assertEqual(json.loads(request.data), {
             'type': 'slack_message_shortcut', 'team_id': 'TTEST', 'channel_id': 'C123',
-            'message_ts': '1792500001.000002', 'thread_ts': '1792500001.000002',
-            'requested_by': 'UTHEO',
+            'message_ts': '1792500001.000002', 'thread_ts': '1792500000.000001',
+            'requested_by': 'UTHEO', 'additional_prompt': 'Analyze only.\nDo not change records.',
         })
-        self.assertIn('Queued', json.dumps(api.call_args.kwargs['view']))
-        self.post(message={'ts': '1792500001.000002', 'text': 'Edited'})
-        self.assertEqual(network.call_args.args[0].data, request.data)
+        self.submit(api, 'Analyze only.\nDo not change records.')
         self.assertEqual(network.call_args.args[0].get_header('Idempotency-key'),
                          request.get_header('Idempotency-key'))
-        self.post(message={'ts': '1792500001.000002', 'thread_ts': '1792500000.000001'})
-        self.assertEqual(json.loads(network.call_args.args[0].data)['thread_ts'], '1792500000.000001')
+        self.submit(api, 'A changed prompt')
+        self.assertNotEqual(network.call_args.args[0].get_header('Idempotency-key'),
+                            request.get_header('Idempotency-key'))
+
+    @patch('desk.slack.slack_api')
+    @patch('desk.slack.urlopen')
+    def test_empty_prompt_preserves_original_event(self, network, api):
+        network.side_effect = lambda *a, **kw: self.accepted()
+        self.post()
+        for prompt in (None, '', '   '):
+            self.assertEqual(self.submit(api, prompt).status_code, 200)
+            event = json.loads(network.call_args.args[0].data)
+            self.assertNotIn('additional_prompt', event)
+            self.assertEqual(network.call_args.args[0].get_header('Idempotency-key'),
+                             'TTEST:C123:1792500001.000002')
+            self.assertEqual(event['thread_ts'], '1792500001.000002')
 
     @patch('desk.slack.slack_api')
     @patch('desk.slack.urlopen')
@@ -77,16 +113,36 @@ class SendToBBTests(SimpleTestCase):
     @patch('desk.slack.urlopen')
     def test_queue_failure_is_visible_and_retry_remains_safe(self, network, api):
         network.side_effect = URLError('unavailable')
-        self.assertEqual(self.post().status_code, 200)
-        self.assertIn('not confirmed', json.dumps(api.call_args.kwargs['view']))
-        self.assertNotIn('Queued', json.dumps(api.call_args.kwargs['view']))
+        self.post()
+        result = self.submit(api, 'Keep this prompt')
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['response_action'], 'errors')
+        self.assertIn('not confirmed', json.dumps(result.json()))
+        self.assertNotIn('Queued', json.dumps(result.json()))
 
     @patch('desk.slack.slack_api', side_effect=URLError('expired_trigger_id'))
     @patch('desk.slack.urlopen')
-    def test_confirmation_failure_does_not_reject_accepted_work(self, network, api):
-        network.return_value = self.accepted()
-        self.assertEqual(self.post().status_code, 200)
-        self.assertEqual(network.call_count, 1)
+    def test_failed_modal_open_does_not_dispatch(self, network, api):
+        self.assertEqual(self.post().status_code, 503)
+        network.assert_not_called()
+
+    @patch('desk.slack.slack_api')
+    @patch('desk.slack.urlopen')
+    def test_submission_rechecks_access_and_signed_context(self, network, api):
+        self.post()
+        self.assertEqual(self.submit(api, user={'id': 'UOTHER'}).status_code, 403)
+        with override_settings(BB_SLACK_USER_ID=''):
+            self.assertEqual(self.submit(api).status_code, 403)
+        with override_settings(BB_WEBHOOK_TOKEN=''):
+            self.assertEqual(self.submit(api).json()['response_action'], 'errors')
+        metadata = api.call_args.kwargs['view']['private_metadata']
+        api.call_args.kwargs['view']['private_metadata'] = metadata + 'tampered'
+        self.assertEqual(self.submit(api).status_code, 403)
+        api.call_args.kwargs['view']['private_metadata'] = metadata
+        with patch('django.core.signing.time.time', return_value=time.time() + 3601):
+            self.assertEqual(self.submit(api).status_code, 403)
+        self.assertEqual(self.submit(api, 'x' * 3001).json()['response_action'], 'errors')
+        network.assert_not_called()
 
     @patch('desk.slack.slack_api')
     @patch('desk.slack.urlopen')

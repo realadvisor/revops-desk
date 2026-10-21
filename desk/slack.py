@@ -33,6 +33,8 @@ from desk.views import create_request
 
 CALLBACK = 'revops_submit'
 SALT = 'desk.slack.modal'
+BB_CALLBACK = 'revops_send_to_bb_submit'
+BB_SALT = 'desk.slack.bb-modal'
 
 
 class NoFileRedirect(HTTPRedirectHandler):
@@ -248,12 +250,12 @@ def verified_payload(request):
 
 
 def send_to_bb(payload):
-    """Dispatch an explicitly selected message after Slack signature verification."""
+    """Open an optional prompt before dispatching the selected message."""
     user = payload.get('user', {}).get('id')
     if not settings.BB_SLACK_USER_ID or user != settings.BB_SLACK_USER_ID:
-        text = 'Send to BB is restricted to Theo. No work was started.'
+        view = notice('Send to BB is restricted to Theo. No work was started.')
     elif not settings.BB_WEBHOOK_TOKEN:
-        text = 'Send to BB is not configured. No work was started.'
+        view = notice('Send to BB is not configured. No work was started.')
     else:
         channel = payload.get('channel', {}).get('id', '')
         message = payload.get('message', {})
@@ -264,41 +266,81 @@ def send_to_bb(payload):
                 or not re.fullmatch(r'\d{10,}\.\d{6}', parent)
                 or message.get('ts') != timestamp):
             raise ValueError('Invalid selected message')
-        # Exclude mutable text and click IDs so retries and repeated clicks match.
         event = {
             'type': 'slack_message_shortcut', 'team_id': settings.SLACK_TEAM_ID,
             'channel_id': channel, 'message_ts': timestamp, 'thread_ts': parent,
             'requested_by': user,
         }
-        request = Request(
-            'https://bb-webhook-triggers-hidgdg2rjq-ew.a.run.app/hooks/slack-revops-message',
-            data=json.dumps(event).encode(),
-            headers={
-                'Authorization': 'Bearer ' + settings.BB_WEBHOOK_TOKEN,
-                'Content-Type': 'application/json',
-                'Idempotency-Key': f'{settings.SLACK_TEAM_ID}:{channel}:{timestamp}',
-            },
-        )
-        try:
-            # The queue call plus the confirmation call fit the 3-second Slack window.
-            with urlopen(request, timeout=1.2) as response:
-                if response.status != 202 or json.load(response).get('accepted') is not True:
-                    raise URLError('Queue did not accept the message')
-            text = ('Queued for BB in RevOps. The agent will analyze this message, apply supported fixes, '
-                    'and report in the original Slack thread. Repeated clicks do not start another agent. '
-                    'If BB is offline, work starts when it reconnects.')
-        except (URLError, TimeoutError, HTTPException, ValueError, AttributeError):
-            text = ('Delivery to BB is not confirmed. Try Send to BB on the same message again. '
-                    'Retries do not start duplicate agents.')
-            logging.getLogger(__name__).warning('Send to BB queue acceptance was not confirmed')
-    try:
-        view = notice(text)
-        view['title'] = plain('Send to BB')
-        slack_api('views.open', trigger_id=payload['trigger_id'], view=view, timeout=1.2)
-    except (URLError, TimeoutError, HTTPException):
-        # A lost/expired confirmation must not reject work already accepted by the queue.
-        logging.getLogger(__name__).warning('Send to BB confirmation could not open')
+        view = {
+            'type': 'modal', 'callback_id': BB_CALLBACK,
+            'submit': plain('Send to BB'), 'close': plain('Cancel'),
+            'private_metadata': signing.dumps(event, salt=BB_SALT),
+            'blocks': [
+                {'type': 'section', 'text': plain(
+                    'Send this message and its thread to BB in RevOps. '
+                    'Add instructions below, or leave the prompt empty.')},
+                {'type': 'input', 'block_id': 'additional_prompt', 'optional': True,
+                 'label': plain('Additional prompt'),
+                 'element': {'type': 'plain_text_input', 'action_id': 'input',
+                             'multiline': True, 'max_length': 3000,
+                             'placeholder': plain('For example: Analyze the cause, but do not make changes.')}},
+                {'type': 'context', 'elements': [plain(
+                    'The same message and prompt start one agent. A different prompt starts a new request.')]},
+            ],
+        }
+    view['title'] = plain('Send to BB')
+    slack_api('views.open', trigger_id=payload['trigger_id'], view=view, timeout=2)
     return HttpResponse()
+
+
+def submit_to_bb(payload):
+    """Validate the submitted prompt and queue the selected message."""
+    user = payload.get('user', {}).get('id')
+    if not settings.BB_SLACK_USER_ID or user != settings.BB_SLACK_USER_ID:
+        raise PermissionDenied('Send to BB is restricted to Theo')
+    view = payload['view']
+    event = signing.loads(view['private_metadata'], salt=BB_SALT, max_age=3600)
+    if event['requested_by'] != user or event['team_id'] != settings.SLACK_TEAM_ID:
+        raise PermissionDenied('Wrong Send to BB user or workspace')
+    prompt = view['state']['values'].get('additional_prompt', {}).get('input', {}).get('value')
+    if prompt is None:
+        prompt = ''
+    if not isinstance(prompt, str) or len(prompt) > 3000:
+        return JsonResponse({'response_action': 'errors', 'errors': {
+            'additional_prompt': 'Use a prompt of 3000 characters or fewer.'}})
+    if not settings.BB_WEBHOOK_TOKEN:
+        return JsonResponse({'response_action': 'errors', 'errors': {
+            'additional_prompt': 'Send to BB is not configured. No work was started.'}})
+    if prompt.strip():
+        event['additional_prompt'] = prompt.strip()
+    # Identical prompts share retry identity. A changed prompt is a new request.
+    key = f"{event['team_id']}:{event['channel_id']}:{event['message_ts']}"
+    if 'additional_prompt' in event:
+        key += ':' + hashlib.sha256(event['additional_prompt'].encode()).hexdigest()
+    request = Request(
+        'https://bb-webhook-triggers-hidgdg2rjq-ew.a.run.app/hooks/slack-revops-message',
+        data=json.dumps(event).encode(),
+        headers={
+            'Authorization': 'Bearer ' + settings.BB_WEBHOOK_TOKEN,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': key,
+        },
+    )
+    try:
+        with urlopen(request, timeout=1.2) as response:
+            if response.status != 202 or json.load(response).get('accepted') is not True:
+                raise URLError('Queue did not accept the message')
+    except (URLError, TimeoutError, HTTPException, ValueError, AttributeError):
+        logging.getLogger(__name__).warning('Send to BB queue acceptance was not confirmed')
+        return JsonResponse({'response_action': 'errors', 'errors': {
+            'additional_prompt': 'Delivery to BB is not confirmed. Press Send to BB again to retry. '
+                                 'Retries do not start duplicate agents.'}})
+    confirmation = notice(
+        'Queued for BB in RevOps. The agent will read the message, its thread, and your prompt. '
+        'Sending the same message and prompt again does not start another agent. '
+        'If BB is offline, work starts when it reconnects.')
+    confirmation['title'] = plain('Send to BB')
+    return JsonResponse({'response_action': 'update', 'view': confirmation})
 
 
 @csrf_exempt  # Slack HMAC authenticates the exact body, workspace and app; browser sessions cannot authorize this route.
@@ -313,6 +355,11 @@ def interactions(request):
             return JsonResponse({'challenge':str(payload.get('challenge',''))[:200]})
         if payload.get('type') == 'message_action' and payload.get('callback_id') == 'revops_send_to_bb':
             return send_to_bb(payload)
+        if payload.get('view', {}).get('callback_id') == BB_CALLBACK:
+            if payload.get('type') == 'view_submission':
+                return submit_to_bb(payload)
+            if payload.get('type') == 'view_closed':
+                return HttpResponse()
         home_button = payload.get('type') == 'block_actions' and any(
             isinstance(action,dict) and action.get('action_id') == 'new_request' for action in payload.get('actions',[]))
         if payload.get('type') == 'block_actions' and not home_button:

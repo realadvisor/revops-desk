@@ -3,7 +3,11 @@
 ## Send a message to BB
 
 Open a message's **More actions** menu and select **Send to BB** under Ask Ops.
-The shortcut queues one agent in the BB RevOps project. The agent reads the
+A private form opens with an optional **Additional prompt** field (3000 characters).
+Add instructions, such as "Analyze only; do not change records", then press
+**Send to BB**. Leave the field empty to use the usual analysis-and-fix task.
+Cancel closes the form without starting work. Submission queues one agent in
+the BB RevOps project. The agent follows your prompt and reads the
 selected message and its thread, investigates, applies supported fixes, and
 reports in that same Slack thread. A private modal confirms queue acceptance.
 Queue acceptance does not mean the agent finished. BB must be running with
@@ -26,11 +30,15 @@ so each distinct message creates a new thread. Retrieve the source token with
 Do not expose it in logs or commit it. Configure these variables only in
 production, deploy the handler, then add the message shortcut from the manifest.
 
-The idempotency key is workspace, channel, and selected-message timestamp.
-Repeated clicks or retries on one message do not create more agents. The event
-contains only stable identifiers, so editing the message does not change the
-event body. Selecting a reply preserves its original parent timestamp.
-If delivery is uncertain, use the same shortcut on the same message again.
+The idempotency key is workspace, channel, selected-message timestamp and,
+for a nonempty prompt, its SHA-256 hash. Repeating the same message and prompt
+does not create more agents. The event
+contains stable message identifiers and, when provided, `additional_prompt`.
+A different prompt starts a new request for the same message. It does not
+update the existing agent. Blank prompts retain the original message-only key. Selecting a reply preserves its original parent timestamp.
+If delivery is uncertain, the form keeps your prompt. Submit it again to retry.
+Modal context is signed, user-bound, and valid for one hour. The handler checks
+access again on submission.
 Inspect `bb webhooks deliveries` for the resulting BB thread.
 
 To disable new dispatches, remove the Slack shortcut or clear
