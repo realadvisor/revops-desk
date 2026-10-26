@@ -9,7 +9,10 @@ Add instructions, such as "Analyze only; do not change records", then press
 Cancel closes the form without starting work. Submission queues one agent in
 the BB RevOps project. The agent follows your prompt and reads the
 selected message and its thread, investigates, applies supported fixes, and
-reports in that same Slack thread. A private modal confirms queue acceptance.
+returns the result in BB. Check **Allow BB to reply in the original Slack thread**
+to also permit one report in that thread. The checkbox is unchecked by default.
+An unchecked choice prevents Slack writes even if the prompt asks for a reply.
+A private modal confirms queue acceptance and the selected reply choice.
 Queue acceptance does not mean the agent finished. BB must be running with
 valid Google credentials. Accepted events wait in Pub/Sub for up to seven days.
 
@@ -30,12 +33,15 @@ so each distinct message creates a new thread. Retrieve the source token with
 Do not expose it in logs or commit it. Configure these variables only in
 production, deploy the handler, then add the message shortcut from the manifest.
 
-The idempotency key is workspace, channel, selected-message timestamp and,
-for a nonempty prompt, its SHA-256 hash. Repeating the same message and prompt
+The idempotency key is workspace, channel, selected-message timestamp,
+`reply-v1`, the reply choice (0 or 1), and, for a nonempty prompt, its SHA-256 hash.
+Repeating the same message, prompt and reply choice
 does not create more agents. The event
-contains stable message identifiers and, when provided, `additional_prompt`.
-A different prompt starts a new request for the same message. It does not
-update the existing agent. Blank prompts retain the original message-only key. Selecting a reply preserves its original parent timestamp.
+contains stable message identifiers, the boolean `reply_in_thread`, and,
+when provided, `additional_prompt`. A different prompt or reply choice starts
+a new request for the same message. It does not update the existing agent.
+The versioned key avoids conflicts with events sent before this option existed.
+Selecting a reply preserves its original parent timestamp.
 If delivery is uncertain, the form keeps your prompt. Submit it again to retry.
 Modal context is signed, user-bound, and valid for one hour. The handler checks
 access again on submission.

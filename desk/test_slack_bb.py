@@ -40,12 +40,16 @@ class SendToBBTests(SimpleTestCase):
         response.status = 202
         return response
 
-    def submit(self, api, prompt=None, **changes):
+    def submit(self, api, prompt=None, reply=False, **changes):
         view = api.call_args.kwargs['view']
+        values = {'additional_prompt': {'input': {'value': prompt}}}
+        if reply is not None:
+            values['reply_in_thread'] = {'input': {'selected_options': (
+                [{'value': 'reply'}] if reply else [])}}
         return self.post(type='view_submission', view={
             'id': 'VTEST', 'callback_id': 'revops_send_to_bb_submit',
             'private_metadata': view['private_metadata'],
-            'state': {'values': {'additional_prompt': {'input': {'value': prompt}}}},
+            'state': {'values': values},
         }, **changes)
 
     @patch('desk.slack.slack_api')
@@ -57,6 +61,10 @@ class SendToBBTests(SimpleTestCase):
         field = next(block for block in view['blocks'] if block['type'] == 'input')
         self.assertTrue(field['optional'])
         self.assertTrue(field['element']['multiline'])
+        reply = next(block for block in view['blocks'] if block.get('block_id') == 'reply_in_thread')
+        self.assertTrue(reply['optional'])
+        self.assertEqual(reply['element']['type'], 'checkboxes')
+        self.assertFalse(reply['element'].get('initial_options'))
         self.assertEqual(self.post(type='view_closed', view=view).status_code, 200)
         network.assert_not_called()
 
@@ -76,6 +84,7 @@ class SendToBBTests(SimpleTestCase):
             'type': 'slack_message_shortcut', 'team_id': 'TTEST', 'channel_id': 'C123',
             'message_ts': '1792500001.000002', 'thread_ts': '1792500000.000001',
             'requested_by': 'UTHEO', 'additional_prompt': 'Analyze only.\nDo not change records.',
+            'reply_in_thread': False,
         })
         self.submit(api, 'Analyze only.\nDo not change records.')
         self.assertEqual(network.call_args.args[0].get_header('Idempotency-key'),
@@ -86,7 +95,7 @@ class SendToBBTests(SimpleTestCase):
 
     @patch('desk.slack.slack_api')
     @patch('desk.slack.urlopen')
-    def test_empty_prompt_preserves_original_event(self, network, api):
+    def test_empty_prompt_has_stable_identity_and_no_slack_reply(self, network, api):
         network.side_effect = lambda *a, **kw: self.accepted()
         self.post()
         for prompt in (None, '', '   '):
@@ -94,8 +103,42 @@ class SendToBBTests(SimpleTestCase):
             event = json.loads(network.call_args.args[0].data)
             self.assertNotIn('additional_prompt', event)
             self.assertEqual(network.call_args.args[0].get_header('Idempotency-key'),
-                             'TTEST:C123:1792500001.000002')
+                             'TTEST:C123:1792500001.000002:reply-v1:0')
+            self.assertIs(event['reply_in_thread'], False)
             self.assertEqual(event['thread_ts'], '1792500001.000002')
+
+    @patch('desk.slack.slack_api')
+    @patch('desk.slack.urlopen')
+    def test_reply_choice_reaches_bb_and_changes_retry_identity(self, network, api):
+        network.side_effect = lambda *a, **kw: self.accepted()
+        self.post()
+        keys = {}
+        for reply in (False, True, True, False, None):
+            result = self.submit(api, 'Analyze only', reply=reply)
+            request = network.call_args.args[0]
+            choice = reply is True
+            self.assertIs(json.loads(request.data)['reply_in_thread'], choice)
+            key = request.get_header('Idempotency-key')
+            if choice in keys:
+                self.assertEqual(key, keys[choice])
+            keys[choice] = key
+            self.assertIn('may reply in the original Slack thread' if choice else
+                          'will reply only in BB', json.dumps(result.json()))
+        self.assertNotEqual(keys[True], keys[False])
+
+    @patch('desk.slack.slack_api')
+    @patch('desk.slack.urlopen')
+    def test_invalid_reply_choice_does_not_dispatch(self, network, api):
+        self.post()
+        metadata = api.call_args.kwargs['view']['private_metadata']
+        for selected in ('true', [None], [{'value': 'other'}], [{'value': 'reply'}] * 2):
+            result = self.post(type='view_submission', view={
+                'callback_id': 'revops_send_to_bb_submit', 'private_metadata': metadata,
+                'state': {'values': {'reply_in_thread': {'input': {'selected_options': selected}}}},
+            })
+            self.assertEqual(result.json()['response_action'], 'errors')
+            self.assertIn('reply_in_thread', result.json()['errors'])
+        network.assert_not_called()
 
     @patch('desk.slack.slack_api')
     @patch('desk.slack.urlopen')

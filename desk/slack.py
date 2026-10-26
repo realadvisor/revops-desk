@@ -284,8 +284,14 @@ def send_to_bb(payload):
                  'element': {'type': 'plain_text_input', 'action_id': 'input',
                              'multiline': True, 'max_length': 3000,
                              'placeholder': plain('For example: Analyze the cause, but do not make changes.')}},
+                {'type': 'input', 'block_id': 'reply_in_thread', 'optional': True,
+                 'label': plain('Slack reply'),
+                 'hint': plain('Leave unchecked to receive the result only in BB.'),
+                 'element': {'type': 'checkboxes', 'action_id': 'input', 'options': [
+                     {'text': plain('Allow BB to reply in the original Slack thread'), 'value': 'reply'}]}},
                 {'type': 'context', 'elements': [plain(
-                    'The same message and prompt start one agent. A different prompt starts a new request.')]},
+                    'The same message, prompt and reply choice start one agent. '
+                    'Changing the prompt or reply choice starts a new request.')]},
             ],
         }
     view['title'] = plain('Send to BB')
@@ -313,8 +319,17 @@ def submit_to_bb(payload):
             'additional_prompt': 'Send to BB is not configured. No work was started.'}})
     if prompt.strip():
         event['additional_prompt'] = prompt.strip()
-    # Identical prompts share retry identity. A changed prompt is a new request.
+    selected = view['state']['values'].get('reply_in_thread', {}).get('input', {}).get('selected_options')
+    if selected is None:
+        selected = []
+    if (not isinstance(selected, list) or len(selected) > 1
+            or any(not isinstance(option, dict) or option.get('value') != 'reply' for option in selected)):
+        return JsonResponse({'response_action': 'errors', 'errors': {
+            'reply_in_thread': 'Select whether BB can reply in the original Slack thread.'}})
+    event['reply_in_thread'] = bool(selected)
+    # Include the reply choice and version to avoid collisions with older payloads.
     key = f"{event['team_id']}:{event['channel_id']}:{event['message_ts']}"
+    key += ':reply-v1:' + str(int(event['reply_in_thread']))
     if 'additional_prompt' in event:
         key += ':' + hashlib.sha256(event['additional_prompt'].encode()).hexdigest()
     request = Request(
@@ -335,9 +350,12 @@ def submit_to_bb(payload):
         return JsonResponse({'response_action': 'errors', 'errors': {
             'additional_prompt': 'Delivery to BB is not confirmed. Press Send to BB again to retry. '
                                  'Retries do not start duplicate agents.'}})
+    reply_notice = ('The agent may reply in the original Slack thread. '
+                    if event['reply_in_thread'] else 'The agent will reply only in BB. ')
     confirmation = notice(
         'Queued for BB in RevOps. The agent will read the message, its thread, and your prompt. '
-        'Sending the same message and prompt again does not start another agent. '
+        + reply_notice +
+        'Sending the same message, prompt and reply choice again does not start another agent. '
         'If BB is offline, work starts when it reconnects.')
     confirmation['title'] = plain('Send to BB')
     return JsonResponse({'response_action': 'update', 'view': confirmation})
